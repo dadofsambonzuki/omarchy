@@ -780,11 +780,17 @@ assert(
   /visible: popupModel\.count > 0 && !popupWindow\.covered/.test(serviceQml),
   'notification popup surfaces are held back on the covered output'
 )
-// Nothing parks a toast: the stack and its expiry are shared by every output,
-// so a free output must keep the lifetime it has always had.
+// Nothing is parked while a screen can still show it: the stack and its expiry
+// are shared by every output, so a toast delivered to a free output keeps the
+// lifetime it has always had. Once no output is left to show one, the countdown
+// stops rather than burning a bypass confirmation unseen.
 assert(
-  !/running: cardSlot\.ticking && !/.test(serviceQml),
-  'notification popup lifetimes are never paused behind a fullscreen window'
+  /running: cardSlot\.ticking && !service\.everyOutputCovered/.test(serviceQml),
+  'notification popup lifetimes pause only while no output can show them'
+)
+assert(
+  !/running: cardSlot\.ticking && !popupWindow\.covered/.test(serviceQml),
+  'a free output never pauses the countdown of the toast it is showing'
 )
 // The decisions themselves, against the shapes Quickshell hands over.
 const fsToplevel = fullscreen => ({ wayland: { fullscreen: fullscreen } })

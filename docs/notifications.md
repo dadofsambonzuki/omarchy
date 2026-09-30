@@ -47,10 +47,12 @@ screen still delivers notifications on the others.
 
 When *every* output is covered there is nowhere left to deliver a toast, so the
 notification is silenced the way DND silences it: no toast, a history entry
-instead, which the notification centre shows. A toast already on screen when the
-fullscreen window appears is hidden with the surface and expires on schedule —
-nothing is parked, because one shared stack and one shared expiry serve every
-output, so a per-output wait has nothing to hold.
+instead, which the notification centre shows. Anything already in the stack then
+stops counting down — nothing can be seen, and the only arrivals that still
+reach the stack in that state are the DND bypasses, so a "Screenshot saved"
+confirmation waits for a screen to come back rather than burning its lifetime
+unseen. It is a pause, not a park: as soon as an output can show toasts again,
+the countdowns resume with the lifetime they had left.
 
 The condition is per monitor's active workspace: a fullscreen window on a
 workspace nobody is showing covers nothing. It reads the Wayland toplevel's

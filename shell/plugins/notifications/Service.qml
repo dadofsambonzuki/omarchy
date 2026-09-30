@@ -1105,7 +1105,15 @@ Item {
             Timer {
               interval: 50
               repeat: true
-              running: cardSlot.ticking
+              // The countdown stops while every output is covered: nothing can
+              // be seen, and the only toasts that reach the stack in that state
+              // are the DND bypasses, so pausing keeps a confirmation like
+              // "Screenshot saved" to show when a screen is free again instead
+              // of burning its lifetime unseen. With an output still free the
+              // countdown runs: a toast delivered to it keeps the lifetime it
+              // has always had, and nothing piles up behind the fullscreen
+              // window.
+              running: cardSlot.ticking && !service.everyOutputCovered
               onTriggered: {
                 if (cardSlot.lifetime <= 0) return
                 cardSlot.remainingLifetime -= 50.0 / cardSlot.lifetime
