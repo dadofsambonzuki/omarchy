@@ -37,6 +37,24 @@ from a dead server generation (ids restart from 1 each shell process), so
 they are keyed by timestamp+id and never matched against live objects — a
 fresh notification reusing an old id must not dismiss or replace them.
 
+## Fullscreen
+
+Toasts are Overlay-layer surfaces, so they draw over a fullscreen client
+whatever the layer ordering. While a window is fullscreen on the workspace an
+output is showing, that output holds its toasts back: the surface is hidden, the
+stack keeps its place, and the toasts come back when the fullscreen window
+closes.
+
+Only the output showing the fullscreen window is hidden — a fullscreen video on
+one screen still leaves the toasts on the other. The countdowns, though, pause
+on every output, because the toast stack and the expiry that removes a toast
+from it are shared: if the copy on an output still showing the toast kept
+counting, it would expire the toast out from under the output holding it back.
+So a held-back toast keeps the lifetime it had left, and nothing expires unseen.
+
+The test is the Wayland toplevel's fullscreen state, not the workspace's
+`hasFullscreen` flag, which is also set for a merely maximized window.
+
 ## Silencing
 
 Do-not-disturb is a single boolean, persisted as the `dnd` key in

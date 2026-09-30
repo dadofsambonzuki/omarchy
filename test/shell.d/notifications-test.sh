@@ -755,4 +755,74 @@ assert(
   !/pendingModel|pastModel/.test(serviceQml),
   'notifications service keeps no in-memory history models'
 )
+
+// A toast is an Overlay-layer surface, so a fullscreen client cannot cover it.
+// The popup window for the output showing that client hides its surface, while
+// the countdowns pause on every output, because one shared stack and one shared
+// expiry serve them all.
+assert(
+  /^import Quickshell\.Hyprland$/m.test(serviceQml),
+  'notifications service resolves the workspace each popup window is showing'
+)
+assert(
+  /readonly property var visibleWorkspace: hyprlandMonitor \? hyprlandMonitor\.activeWorkspace : null/.test(serviceQml),
+  'notifications popups guard on the workspace on show, not on the focused one'
+)
+assert(
+  /visible: popupModel\.count > 0 && !popupWindow\.fullscreenHere/.test(serviceQml),
+  'notification popup surfaces are hidden behind a fullscreen window'
+)
+assert(
+  /running: cardSlot\.ticking && !service\.fullscreenAnywhere/.test(serviceQml),
+  'notification popup lifetimes pause on every output while one of them is covered'
+)
+// The decisions themselves, against the shapes Quickshell hands over.
+const fsToplevel = fullscreen => ({ wayland: { fullscreen: fullscreen } })
+const fsWorkspace = (...toplevels) => ({ toplevels: { values: toplevels } })
+
+assert(
+  notifications.workspaceHoldsFullscreen(fsWorkspace(fsToplevel(true))),
+  'a fullscreen toplevel holds its workspace\'s toasts back'
+)
+assert(
+  !notifications.workspaceHoldsFullscreen(fsWorkspace(fsToplevel(false), { wayland: { fullscreen: false, maximized: true } })),
+  'a maximized window holds nothing back, though the workspace hasFullscreen flag is set for it'
+)
+assert(!notifications.workspaceHoldsFullscreen(fsWorkspace()), 'a workspace with no toplevels holds nothing back')
+assert(!notifications.workspaceHoldsFullscreen(null), 'a missing workspace holds nothing back')
+assert(!notifications.workspaceHoldsFullscreen({}), 'a workspace without a toplevel model holds nothing back')
+assert(!notifications.workspaceHoldsFullscreen(fsWorkspace(null)), 'a null toplevel holds nothing back')
+assert(
+  notifications.workspaceHoldsFullscreen({ toplevels: [fsToplevel(true)] }),
+  'a plain toplevel array reads the same as the ObjectModel'
+)
+
+assert(
+  notifications.anyWorkspaceHoldsFullscreen([
+    { activeWorkspace: fsWorkspace(fsToplevel(false)) },
+    { activeWorkspace: fsWorkspace(fsToplevel(true)) }
+  ]),
+  'one covered output pauses the countdowns on all of them'
+)
+assert(
+  notifications.anyWorkspaceHoldsFullscreen({ values: [{ activeWorkspace: fsWorkspace(fsToplevel(true)) }] }),
+  'monitors arrive as an ObjectModel'
+)
+assert(
+  !notifications.anyWorkspaceHoldsFullscreen([
+    { activeWorkspace: fsWorkspace(fsToplevel(false)) },
+    { activeWorkspace: null }
+  ]),
+  'outputs showing ordinary windows leave the countdowns running'
+)
+assert(!notifications.anyWorkspaceHoldsFullscreen([]), 'no outputs at all pauses nothing')
+assert(!notifications.anyWorkspaceHoldsFullscreen(null), 'a missing monitor list pauses nothing')
+// The workspace flag is set for a merely maximized window too, which leaves the
+// bar and the desktop edges in view, so it would hold back toasts nothing is
+// covering. Asserted on the property access, so a comment explaining why not to
+// use it does not read as a use of it.
+assert(
+  !/\.hasFullscreen/.test(serviceQml),
+  'notifications popups do not use the workspace hasFullscreen flag'
+)
 JS

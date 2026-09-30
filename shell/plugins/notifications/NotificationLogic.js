@@ -463,6 +463,51 @@ function historyRows(raw, liveRows, normalUrgency, limit) {
   return out.slice(0, max)
 }
 
+// A toast is an Overlay-layer surface, so a fullscreen client can never cover
+// one. What holds a toast back is the fullscreen state of the Wayland toplevel
+// itself, not the workspace's hasFullscreen flag: Hyprland sets that flag for a
+// merely maximized window too, and a maximized window still leaves the bar and
+// the desktop's edges in view.
+function toplevelFullscreen(toplevel) {
+  return !!(toplevel && toplevel.wayland && toplevel.wayland.fullscreen)
+}
+
+// Quickshell hands a workspace's toplevels over as an ObjectModel, whose values
+// live behind `.values`; a test hands over a plain array, whose own `.values` is
+// Array.prototype.values. Read the array first, or the fallback finds a function
+// with no length and concludes the workspace is empty.
+function workspaceToplevels(workspace) {
+  if (!workspace || !workspace.toplevels) return []
+  var toplevels = Array.isArray(workspace.toplevels) ? workspace.toplevels : workspace.toplevels.values
+  return toplevels && toplevels.length ? toplevels : []
+}
+
+// The workspace an output is *showing*, which is not the focused one: a
+// fullscreen window covers its own output only, and one parked on a workspace
+// nobody is showing covers nothing.
+function workspaceHoldsFullscreen(workspace) {
+  var toplevels = workspaceToplevels(workspace)
+  for (var i = 0; i < toplevels.length; i++) {
+    if (toplevelFullscreen(toplevels[i])) return true
+  }
+  return false
+}
+
+// Whether any output on show has a fullscreen window. The toast stack and the
+// expiry that removes a toast from it are shared by every output, so the
+// countdown pauses on all of them at once: a toast held back on the covered
+// output must not be expired under it by the copy on an output still showing
+// it, or leaving fullscreen would show nothing at all.
+function anyWorkspaceHoldsFullscreen(monitors) {
+  var list = Array.isArray(monitors) ? monitors : (monitors ? monitors.values : null)
+  if (!list || !list.length) return false
+  for (var i = 0; i < list.length; i++) {
+    var monitor = list[i]
+    if (workspaceHoldsFullscreen(monitor ? monitor.activeWorkspace : null)) return true
+  }
+  return false
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     isChromiumDerived: isChromiumDerived,
@@ -492,6 +537,8 @@ if (typeof module !== "undefined") {
     serializePopup: serializePopup,
     parsePopupFiles: parsePopupFiles,
     popupExpired: popupExpired,
-    popupPlacement: popupPlacement
+    popupPlacement: popupPlacement,
+    workspaceHoldsFullscreen: workspaceHoldsFullscreen,
+    anyWorkspaceHoldsFullscreen: anyWorkspaceHoldsFullscreen
   }
 }
