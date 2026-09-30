@@ -105,7 +105,11 @@ Panel {
     return {
       title: String(title || "") !== "" ? String(title) : windowTitle(label),
       percent: Number(percent),
-      resetAt: String(resetAt || "")
+      resetAt: String(resetAt || ""),
+      // The cycle's own length, kept from the collector's label: the display
+      // title has already lost it ("Session" carries no duration), and the
+      // meter needs it to show where the clock is against the spend.
+      spanMs: windowSpanMs(label)
     }
   }
 
@@ -707,6 +711,29 @@ Panel {
 
     readonly property bool alarming: window && window.percent >= 0.9
 
+    // How far through the cycle the window is, when its length is known. -1
+    // (unknown span, or already reset) leaves the meter drawing spend alone.
+    readonly property real elapsed: {
+      var span = limitRow.window ? Number(limitRow.window.spanMs || 0) : 0
+      var remaining = root.resetMsFor(limitRow.window)
+      if (span <= 0 || remaining < 0) return -1
+      return root.clamp(1 - remaining / span, 0, 1)
+    }
+
+    // Usage against the clock, in points of the allowance: positive is ahead
+    // of the cycle, negative behind. paceKnown false when either side is
+    // unknown — a bare negative cannot carry that, since behind is negative.
+    readonly property bool paceKnown: limitRow.elapsed >= 0 && !!limitRow.window && limitRow.window.percent >= 0
+    readonly property real paceDelta: limitRow.paceKnown ? limitRow.window.percent - limitRow.elapsed : 0
+    readonly property bool paceAhead: limitRow.paceKnown && limitRow.paceDelta > 0
+    // Under a point either way reads as level rather than as noise.
+    readonly property string paceCaption: {
+      if (!limitRow.paceKnown) return ""
+      var points = Math.round(Math.abs(limitRow.paceDelta) * 100)
+      if (points < 1) return "on pace"
+      return points + "% " + (limitRow.paceAhead ? "ahead" : "behind")
+    }
+
     spacing: Style.space(6)
 
     Item {
@@ -747,27 +774,55 @@ Panel {
       width: parent.width
       value: limitRow.window ? limitRow.window.percent : -1
       alarming: limitRow.alarming
+      pace: limitRow.elapsed
     }
 
-    Text {
-      id: resetText
-      textFormat: Text.PlainText
+    Item {
       width: parent.width
-      text: {
-        var remainingMs = root.resetMsFor(limitRow.window)
-        return remainingMs > 0 ? "Resets in " + root.formatDuration(remainingMs) : ""
+      implicitHeight: resetText.implicitHeight
+
+      Text {
+        id: resetText
+        textFormat: Text.PlainText
+        // The countdown gives way to the pace readout rather than overlapping
+        // it: both describe the same window and either one alone is useful.
+        width: parent.width - (paceText.visible ? paceText.width + Style.spacing.sm : 0)
+        text: {
+          var remainingMs = root.resetMsFor(limitRow.window)
+          return remainingMs > 0 ? "Resets in " + root.formatDuration(remainingMs) : ""
+        }
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideRight
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
       }
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
+
+      Text {
+        id: paceText
+        textFormat: Text.PlainText
+        // Ahead of the cycle is the one worth noticing; on pace and behind are
+        // the unremarkable states and stay as quiet as the countdown.
+        visible: limitRow.paceCaption !== ""
+        text: limitRow.paceCaption
+        color: limitRow.paceAhead ? root.foreground : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+      }
     }
   }
 
-  // Rounded track showing the percentage of the allowance used.
+  // Rounded track showing the percentage of the allowance used, with the
+  // cycle's elapsed time behind it when the window's length is known.
   component Meter: Item {
     id: meter
     property real value: -1
     property bool alarming: false
+    // Elapsed fraction of the cycle: -1 hides the pace layer entirely.
+    property real pace: -1
     property real thickness: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.14))
 
     implicitHeight: thickness
@@ -777,6 +832,19 @@ Panel {
       anchors.fill: parent
       radius: height / 2
       color: root.track
+    }
+
+    // Where the clock is, in the same space as the spend: the dim band is
+    // elapsed time and the notch its edge, so the bright fill reads against it
+    // — past the notch is ahead of pace, short of it is behind.
+    Rectangle {
+      visible: meter.pace >= 0
+      anchors.left: meterTrack.left
+      anchors.verticalCenter: meterTrack.verticalCenter
+      height: meterTrack.height
+      radius: meterTrack.radius
+      width: meterTrack.width * root.clamp(meter.pace, 0, 1)
+      color: root.alpha(root.foreground, 0.22)
     }
 
     Rectangle {
@@ -790,6 +858,18 @@ Panel {
       Behavior on width {
         NumberAnimation { duration: Style.duration(160); easing.type: Easing.OutCubic }
       }
+    }
+
+    // The clock's edge, over the fill: without it a fill that covers the
+    // elapsed band would hide the very comparison this draws.
+    Rectangle {
+      visible: meter.pace >= 0
+      anchors.verticalCenter: meterTrack.verticalCenter
+      x: Math.round(meterTrack.width * root.clamp(meter.pace, 0, 1)) - width / 2
+      width: Math.max(2, Math.round(Style.space(2)))
+      height: meterTrack.height + Style.space(2)
+      radius: width / 2
+      color: root.alpha(root.surface, 0.9)
     }
 
   }
