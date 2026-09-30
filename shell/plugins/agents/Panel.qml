@@ -87,13 +87,15 @@ Panel {
     // A context size is not a cycle, and it sits exactly where a duration
     // would: "Opus 5 (1M context) Session" is a five-hour session whose "1M"
     // would otherwise parse as one minute, and "1m" is indistinguishable from
-    // it once the label is lowercased. The word "context" is the tell, and a
-    // collector labelling a window in bare minutes is rarer than a model name
-    // carrying a context size — so a context token wins, and minutes are read
-    // only from a label that names no context.
-    if (/context/.test(text)) return 0
-    var minutes = text.match(/(\d+)\s*-?\s*(?:min(?:ute)?s?\b|m\b)/)
-    if (minutes && Number(minutes[1]) < 60) return Number(minutes[1]) * 60 * 1000
+    // it once the label is lowercased. A number is a context size only where
+    // the word "context" says so, so those tokens are dropped before the
+    // duration is read: a collector may state a real cycle alongside a context
+    // size ("Opus 5 (1M context) 30m window"), and that cycle is still a cycle.
+    // Everything else keeps its abbreviated form, so "30m", "90m" and
+    // "120m window" are all cycles — a minute count is not capped at an hour.
+    var minutes = text.replace(/\b\d+\s*m(?=\s*(?:context|million))/g, " ")
+      .match(/(\d+)\s*-?\s*(?:min(?:ute)?s?\b|m\b)/)
+    if (minutes) return Number(minutes[1]) * 60 * 1000
     return 0
   }
 

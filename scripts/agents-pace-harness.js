@@ -117,8 +117,9 @@ const DAY = 24 * HOUR
 // though it sits where a duration would: "Opus 5 (1M context) Session" is a
 // five-hour session whose "1M" would otherwise parse as one minute — and "1m"
 // is indistinguishable from it once lowercased, so the word "context" is the
-// tell. A collector labelling a window in bare minutes must keep working:
-// "Rolling (30m)" is a 30-minute cycle.
+// only tell. Two things must keep working around that: a collector labelling a
+// window in bare minutes ("Rolling (30m)", including durations past an hour),
+// and a collector stating a real cycle alongside a context size.
 for (const [label, spanMs] of [
   ['Rolling (5h)', 5 * HOUR],
   ['5h window', 5 * HOUR],
@@ -132,10 +133,14 @@ for (const [label, spanMs] of [
   ['30 minutes', 30 * 60 * 1000],
   ['30 min', 30 * 60 * 1000],
   ['45m window', 45 * 60 * 1000],
+  ['90m window', 90 * 60 * 1000],
+  ['120m window', 120 * 60 * 1000],
   ['Opus 5 (1M context) Session', 0],
   ['Opus 5 (1m context) Session', 0],
   ['Opus 5 (2M context) Session', 0],
   ['GPT 5.4 (1M context)', 0],
+  ['Opus 5 (200K context) Session', 0],
+  ['Opus 5 (1M context) 30m window', 30 * 60 * 1000],
   ['Opus 5 (1M context) Weekly', 7 * DAY],
   ['Opus 5 (1M context) 5h window', 5 * HOUR]
 ]) {
