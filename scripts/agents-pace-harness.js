@@ -113,10 +113,12 @@ const iso = ms => new Date(nowMs + ms).toISOString()
 const HOUR = 3600 * 1000
 const DAY = 24 * HOUR
 
-// A cycle has to be stated outright. A bare number beside a unit is not enough,
-// because a model name carries one too: "Opus 5 (1M context) Session" is a
-// five-hour session, and reading its "1M" as a minute put the pace marker in
-// the wrong place and captioned the row "ahead".
+// A cycle has to be stated outright, and a context size is not a cycle even
+// though it sits where a duration would: "Opus 5 (1M context) Session" is a
+// five-hour session whose "1M" would otherwise parse as one minute — and "1m"
+// is indistinguishable from it once lowercased, so the word "context" is the
+// tell. A collector labelling a window in bare minutes must keep working:
+// "Rolling (30m)" is a 30-minute cycle.
 for (const [label, spanMs] of [
   ['Rolling (5h)', 5 * HOUR],
   ['5h window', 5 * HOUR],
@@ -125,10 +127,15 @@ for (const [label, spanMs] of [
   ['Weekly (7-day)', 7 * DAY],
   ['Monthly', 30 * DAY],
   ['30m window', 30 * 60 * 1000],
+  ['Rolling (30m)', 30 * 60 * 1000],
+  ['30m', 30 * 60 * 1000],
   ['30 minutes', 30 * 60 * 1000],
   ['30 min', 30 * 60 * 1000],
+  ['45m window', 45 * 60 * 1000],
   ['Opus 5 (1M context) Session', 0],
   ['Opus 5 (1m context) Session', 0],
+  ['Opus 5 (2M context) Session', 0],
+  ['GPT 5.4 (1M context)', 0],
   ['Opus 5 (1M context) Weekly', 7 * DAY],
   ['Opus 5 (1M context) 5h window', 5 * HOUR]
 ]) {

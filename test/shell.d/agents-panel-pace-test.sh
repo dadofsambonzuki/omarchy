@@ -38,6 +38,8 @@ assert(/^ok - a level window reads as on pace$/m.test(output), 'a level window r
 assert(/^ok - a window of unknown length has no elapsed position$/m.test(output), 'a window of unknown length is left unpaced')
 assert(/^ok - a window of unknown length says nothing$/m.test(output), 'a window of unknown length says no caption')
 assert(/^ok - windowSpanMs reads Opus 5 \(1M context\) Session$/m.test(output), "a model name's context size is not a cycle length")
+assert(/^ok - windowSpanMs reads Rolling \(30m\)$/m.test(output), 'a collector may label a window in bare minutes')
+assert(/^ok - windowSpanMs reads GPT 5\.4 \(1M context\)$/m.test(output), 'a context size with no session word is not a cycle either')
 assert(/^ok - an already-reset window has no elapsed position$/m.test(output), 'a window past its reset is left unpaced')
 assert(/^ok - a window that has not started clamps to zero elapsed$/m.test(output), 'a window before its cycle clamps to zero')
 JS
