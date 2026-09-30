@@ -77,13 +77,20 @@ Panel {
       || text.indexOf("month") >= 0 || text.indexOf("30-day") >= 0
   }
 
+  // The cycle a label names, or 0 when it names none. Only an explicit
+  // "5-hour", "30m window" style duration is a cycle: a bare number beside a
+  // unit is not, because a model name carries one too — "Opus 5 (1M context)
+  // Session" would otherwise read as a one-minute window, and windowSpanMs()
+  // feeds the pace marker as well as the title.
   function windowSpanMs(label) {
     var text = String(label || "").toLowerCase()
     if (text.indexOf("month") >= 0 || text.indexOf("30-day") >= 0) return 30 * 24 * 3600 * 1000
     if (windowIsLong(text)) return 7 * 24 * 3600 * 1000
-    var hours = text.match(/(\d+)\s*-?\s*h(?:our)?\b/)
+    var hours = text.match(/(\d+)\s*-?\s*h(?:our)?s?\b/)
     if (hours) return Number(hours[1]) * 3600 * 1000
-    var minutes = text.match(/(\d+)\s*-?\s*m(?:in(?:ute)?s?)?\b/)
+    // Minutes need a word: a bare "1M" is a context size, not a minute, so
+    // either the unit is spelled out or the collector named the window.
+    var minutes = text.match(/(\d+)\s*-?\s*min(?:ute)?s?\b/) || text.match(/(\d+)\s*-?\s*m\b\s*window\b/)
     if (minutes) return Number(minutes[1]) * 60 * 1000
     return 0
   }

@@ -1,28 +1,38 @@
-// Drives the agents panel's pace arithmetic out of Panel.qml, on the base
-// revision and on the patched one, with no QML runtime involved: the functions
-// are brace-extracted, evaluated against a stub root, and called.
+// Drives the agents panel's pace logic out of Panel.qml, with no QML runtime
+// involved. Two kinds of thing are extracted and run:
+//
+//   1. the top-level window helpers (windowSpanMs, limitWindow, ...) — brace-
+//      matched out of the file and evaluated in one scope, because they call
+//      each other;
+//   2. LimitRow's own property bindings (elapsed, paceCaption and the three
+//      they depend on) — defined as real getters on one stand-in for
+//      `limitRow`, so `paceCaption` reads the shipped `paceDelta`, which reads
+//      the shipped `elapsed`, rather than a copy of them. A sign error or a
+//      change to the unknown-state convention therefore fails here instead of
+//      shipping.
 //
 //   node scripts/agents-pace-harness.js <path-to-Panel.qml>
 //
-// Exits non-zero on the first failed expectation, printing which revision ran.
+// Exits non-zero on the first failed expectation.
 
 const fs = require('fs')
-const path = process.argv[2]
+const file = process.argv[2]
 
-if (!path) {
+if (!file) {
   console.error('usage: node agents-pace-harness.js <Panel.qml>')
   process.exit(2)
 }
 
-const source = fs.readFileSync(path, 'utf8')
+const source = fs.readFileSync(file, 'utf8')
 
-// Brace-match a named top-level function out of the file, string-aware so a
-// brace inside a QML string or comment cannot end it early.
+// Brace-match a named top-level function, string-aware so a brace inside a QML
+// string or a line comment cannot end it early.
 function extractFunction(name) {
   const start = source.indexOf('function ' + name + '(')
   if (start < 0) return null
-  let depth = 0, i = source.indexOf('{', start), quote = null
-  for (; i < source.length; i++) {
+  let quote = null
+  let depth = 0
+  for (let i = source.indexOf('{', start); i < source.length; i++) {
     const c = source[i]
     if (quote) {
       if (c === '\\') i++
@@ -35,6 +45,35 @@ function extractFunction(name) {
     else if (c === '}') { depth--; if (depth === 0) return source.slice(start, i + 1) }
   }
   return null
+}
+
+// The same, for a `readonly property <type> <name>: { ... }` binding inside a
+// named inline component. The opening brace has to be on the declaration's own
+// line: a single-line binding such as `paceKnown: limitRow.elapsed >= 0` has no
+// brace at all, and searching on for one would run into the next binding's
+// block and return that body's source instead.
+function extractBinding(component, name) {
+  const from = source.indexOf('component ' + component)
+  if (from < 0) return null
+  const marker = 'readonly property '
+  let at = from
+  for (;;) {
+    at = source.indexOf(marker, at)
+    if (at < 0) return null
+    const end = source.indexOf('\n', at)
+    const declaration = source.slice(at, end)
+    if (declaration.includes(' ' + name + ':')) {
+      if (!declaration.includes('{')) return ' ' + declaration.slice(declaration.indexOf(name + ':') + name.length + 1).trim()
+      const open = source.indexOf('{', at)
+      let depth = 0
+      for (let i = open; i < source.length; i++) {
+        if (source[i] === '{') depth++
+        else if (source[i] === '}') { depth--; if (depth === 0) return source.slice(open + 1, i) }
+      }
+      return null
+    }
+    at = end === -1 ? source.length : end
+  }
 }
 
 const nowMs = Date.parse('2026-09-30T14:30:00Z')
@@ -53,11 +92,14 @@ const names = ['clamp', 'windowIsLong', 'windowSpanMs', 'windowTitle', 'limitWin
 // limitWindow() calls windowSpanMs(), so they have to share a scope exactly as
 // they do inside the QML object.
 const bodies = names.map(extractFunction).filter(Boolean)
-const available = {}
-if (bodies.length) {
-  const factory = new Function('root', bodies.join('\n') + '\nreturn { ' + names.join(', ') + ' };')
-  Object.assign(available, factory(root))
+if (!bodies.length) {
+  console.log('no limit-window helpers in this revision — nothing to drive')
+  process.exit(0)
 }
+const available = Object.assign(
+  {},
+  new Function('root', bodies.join('\n') + '\nreturn { ' + names.join(', ') + ' };')(root)
+)
 
 let failed = false
 function check(description, condition, detail) {
@@ -68,22 +110,28 @@ function check(description, condition, detail) {
 }
 
 const iso = ms => new Date(nowMs + ms).toISOString()
+const HOUR = 3600 * 1000
+const DAY = 24 * HOUR
 
-if (!available.limitWindow) {
-  console.log('no limitWindow() in this revision — nothing to drive')
-  process.exit(0)
-}
-
-// The span has to come off the collector's label: the display title has lost it.
+// A cycle has to be stated outright. A bare number beside a unit is not enough,
+// because a model name carries one too: "Opus 5 (1M context) Session" is a
+// five-hour session, and reading its "1M" as a minute put the pace marker in
+// the wrong place and captioned the row "ahead".
 for (const [label, spanMs] of [
-  ['Rolling (5h)', 5 * 3600 * 1000],
-  ['5h window', 5 * 3600 * 1000],
+  ['Rolling (5h)', 5 * HOUR],
+  ['5h window', 5 * HOUR],
+  ['5 hours', 5 * HOUR],
   ['Session', 0],
-  ['Weekly (7-day)', 7 * 24 * 3600 * 1000],
-  ['Monthly', 30 * 24 * 3600 * 1000],
-  ['30m window', 30 * 60 * 1000]
+  ['Weekly (7-day)', 7 * DAY],
+  ['Monthly', 30 * DAY],
+  ['30m window', 30 * 60 * 1000],
+  ['30 minutes', 30 * 60 * 1000],
+  ['30 min', 30 * 60 * 1000],
+  ['Opus 5 (1M context) Session', 0],
+  ['Opus 5 (1m context) Session', 0],
+  ['Opus 5 (1M context) Weekly', 7 * DAY],
+  ['Opus 5 (1M context) 5h window', 5 * HOUR]
 ]) {
-  if (!available.windowSpanMs) break
   check(
     'windowSpanMs reads ' + label,
     available.windowSpanMs(label) === spanMs,
@@ -91,58 +139,74 @@ for (const [label, spanMs] of [
   )
 }
 
-// limitWindow() must carry the span through; the patched revision does, the
-// base one cannot (it has no such field to read).
-const fiveHour = available.limitWindow('Rolling (5h)', 0.02, iso(5 * 3600 * 1000 - 47 * 60 * 1000), '')
-check('a 5h window keeps its title', fiveHour.title === 'Session', JSON.stringify(fiveHour))
-check('a duration-less title still yields no span', available.limitWindow('Session', 0.5, iso(3600 * 1000), '').spanMs === available.limitWindow('Session', 0.5, iso(3600 * 1000), '').spanMs)
+// A collector-stated title still wins over the label, and the span still comes
+// from the label: the two are read from different places on purpose.
+const titled = available.limitWindows({ limits: [
+  { label: 'Session (5-hour)', percent: 0.78, resetsAt: '' },
+  { label: 'Opus 5 (1M context) Weekly', title: 'Opus 5 (1M context) Weekly', percent: 0.42, resetsAt: '' }
+] })
+check('a collector-stated title is taken as it stands', titled[0].title === 'Session', JSON.stringify(titled[0]))
+check('a 5-hour label keeps its span', titled[0].spanMs === 5 * HOUR, titled[0].spanMs)
+check('a model-scoped weekly row keeps its span', titled[1].spanMs === 7 * DAY, titled[1].spanMs)
 
-// Elapsed, as the row computes it: 1 - remaining/span, clamped, -1 when unknown.
-function elapsed(window) {
-  const span = Number(window.spanMs || 0)
-  const remaining = root.resetMsFor(window)
-  if (span <= 0 || remaining < 0) return -1
-  return root.clamp(1 - remaining / span, 0, 1)
+// Now LimitRow's own bindings. The five bodies are compiled together, in file
+// order, with the QML property declaration turned into a plain assignment and
+// the `limitRow.` qualifier dropped: the shipped expressions then read each
+// other's computed values directly, so paceCaption is driven by the shipped
+// paceDelta, which is driven by the shipped elapsed.
+const limitRow = { window: null }
+const bindingSpecs = ['real elapsed', 'bool paceKnown', 'real paceDelta', 'bool paceAhead', 'string paceCaption']
+const bindingNames = bindingSpecs.map(spec => spec.split(' ').pop())
+const bindingBodies = bindingNames.map(name => extractBinding('LimitRow', name))
+
+let computeRow = null
+if (bindingBodies.every(Boolean)) {
+  // A block binding already ends in `return`; a single-line one is just an
+  // expression, so it has to be returned from the wrapper or the wrapper
+  // yields undefined and every property that reads it sees nothing.
+  const wrap = body => (/^\s*return\b/m.test(body) ? body : 'return (' + body + ')')
+  const program = bindingBodies
+    .map((body, i) => 'var ' + bindingNames[i] + ' = (function(){' + wrap(body) + '})();')
+    .join('\n')
+    .replace(/limitRow\.(elapsed|paceKnown|paceDelta|paceAhead|paceCaption)\b/g, '$1')
+  computeRow = new Function('root', 'limitRow', program + '\nreturn { ' + bindingNames.join(', ') + ' };').bind(null, root, limitRow)
 }
 
-// remaining is the time LEFT in the window, which is what resetsAt carries:
-// a 5h window 47 minutes from its reset is 84% elapsed, not 16%.
-const rolling = available.limitWindow('Rolling (5h)', 0.02, iso(47 * 60 * 1000), '')
-const weekly = available.limitWindow('Weekly (7-day)', 0.25, iso((4 * 24 + 10) * 3600 * 1000), '')
-const unknown = available.limitWindow('Session', 0.4, iso(3600 * 1000), 'Opus 5 (1M context)')
-
-const rollingElapsed = elapsed(rolling)
-check(
-  'a 5h window with 47m left is ~84% elapsed',
-  rollingElapsed > 0.83 && rollingElapsed < 0.85,
-  rollingElapsed
-)
-check(
-  'a 7d window with 4d10h left is ~37% elapsed',
-  Math.abs(elapsed(weekly) - 0.369) < 0.01,
-  elapsed(weekly)
-)
-check('a window with no span has no elapsed position', elapsed(unknown) === -1, elapsed(unknown))
-
-// The caption, as the row writes it: points of the allowance, ahead or behind.
-function caption(window) {
-  const e = elapsed(window)
-  if (e < 0 || !(window && window.percent >= 0)) return ''
-  const points = Math.round(Math.abs(window.percent - e) * 100)
-  if (points < 1) return 'on pace'
-  return points + '% ' + (window.percent > e ? 'ahead' : 'behind')
+if (!computeRow) {
+  console.log('this revision keeps no pace bindings on LimitRow — pace logic absent by construction')
+  process.exit(failed ? 1 : 0)
 }
 
-if (available.limitWindow('Session', 0.4, iso(3600 * 1000), 'Opus 5 (1M context)').spanMs !== undefined) {
-  check('behind when spend lags the clock', caption(rolling) === '82% behind', caption(rolling))
-  check('behind for the weekly row', caption(weekly) === '12% behind', caption(weekly))
-  check('an unspanned window says nothing', caption(unknown) === '', JSON.stringify(caption(unknown)))
-  const level = available.limitWindow('Rolling (5h)', Math.round(elapsed(rolling) * 100) / 100, iso(47 * 60 * 1000), '')
-  check('within a point reads as on pace', caption(level) === 'on pace', caption(level))
-  const ahead = available.limitWindow('Rolling (5h)', 0.99, iso(5 * 3600 * 1000 - 20 * 60 * 1000), '')
-  check('ahead when spend outruns the clock', caption(ahead) === '92% ahead', caption(ahead))
-} else {
-  console.log('this revision keeps no span on the window — pace logic absent by construction')
+function row(label, percent, remainingMs, title) {
+  limitRow.window = available.limitWindow(label, percent, iso(remainingMs), title)
+  const computed = computeRow(root, limitRow)
+  return { elapsed: computed.elapsed, caption: computed.paceCaption }
 }
+
+// resetsAt carries the time LEFT in the window: a 5h window 47 minutes from
+// its reset is 84% elapsed, not 16%.
+const rolling = row('Rolling (5h)', 0.02, 47 * 60 * 1000, '')
+check('a 5h window with 47m left is ~84% elapsed', rolling.elapsed > 0.83 && rolling.elapsed < 0.85, rolling.elapsed)
+check('a window behind the clock says so', rolling.caption === '82% behind', rolling.caption)
+
+const weekly = row('Weekly (7-day)', 0.25, (4 * 24 + 10) * HOUR, '')
+check('a 7d window with 4d10h left is ~37% elapsed', Math.abs(weekly.elapsed - 0.369) < 0.01, weekly.elapsed)
+check('the weekly row says it is behind', weekly.caption === '12% behind', weekly.caption)
+
+const ahead = row('Rolling (5h)', 0.99, 5 * HOUR - 20 * 60 * 1000, '')
+check('a window ahead of the clock says so', ahead.caption === '92% ahead', ahead.caption)
+
+const level = row('Rolling (5h)', Math.round(0.837 * 100) / 100, 47 * 60 * 1000, '')
+check('a level window reads as on pace', level.caption === 'on pace', level.caption)
+
+const unspanned = row('Opus 5 (1M context) Session', 0.4, 60 * 60 * 1000, '')
+check('a window of unknown length has no elapsed position', unspanned.elapsed === -1, unspanned.elapsed)
+check('a window of unknown length says nothing', unspanned.caption === '', JSON.stringify(unspanned.caption))
+
+const spent = row('Rolling (5h)', 0.02, -60 * 1000, '')
+check('an already-reset window has no elapsed position', spent.elapsed === -1, spent.elapsed)
+
+const started = row('Rolling (5h)', 0.02, 5 * HOUR + 60 * 1000, '')
+check('a window that has not started clamps to zero elapsed', started.elapsed === 0, started.elapsed)
 
 process.exit(failed ? 1 : 0)

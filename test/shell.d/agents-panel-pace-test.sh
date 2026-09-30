@@ -4,11 +4,12 @@ source "$(dirname "$0")/base-test.sh"
 
 require_command node
 
-# The panel's pace arithmetic is plain QML/JavaScript, so it is driven directly
-# rather than through a QML runtime: the harness brace-extracts the functions
-# out of Panel.qml and calls them against a stub root. What must hold is that
-# the window's own length survives limitWindow() and that the elapsed fraction
-# and the caption follow from it.
+# The panel's pace logic is plain QML/JavaScript, so it is driven directly
+# rather than through a QML runtime: the harness brace-extracts the window
+# helpers and LimitRow's own property bindings out of Panel.qml and runs them
+# against a stub root. What must hold is that the window's own length survives
+# limitWindow(), that a duration in a model name does not, and that the elapsed
+# fraction and the caption follow from the shipped bindings.
 run_node_test <<'JS'
 const { execFileSync } = require('child_process')
 const fs = require('fs')
@@ -31,9 +32,12 @@ try {
 
 console.log(output.trim())
 assert(/^ok - a 5h window with 47m left is ~84% elapsed$/m.test(output), 'a 5h window is paced by the clock')
-assert(/^ok - behind when spend lags the clock$/m.test(output), 'a window behind the clock says so')
-assert(/^ok - ahead when spend outruns the clock$/m.test(output), 'a window ahead of the clock says so')
-assert(/^ok - within a point reads as on pace$/m.test(output), 'a level window reads as on pace')
-assert(/^ok - a window with no span has no elapsed position$/m.test(output), 'a window of unknown length is left unpaced')
-assert(/^ok - an unspanned window says nothing$/m.test(output), 'a window of unknown length says no caption')
+assert(/^ok - a window behind the clock says so$/m.test(output), 'a window behind the clock says so')
+assert(/^ok - a window ahead of the clock says so$/m.test(output), 'a window ahead of the clock says so')
+assert(/^ok - a level window reads as on pace$/m.test(output), 'a level window reads as on pace')
+assert(/^ok - a window of unknown length has no elapsed position$/m.test(output), 'a window of unknown length is left unpaced')
+assert(/^ok - a window of unknown length says nothing$/m.test(output), 'a window of unknown length says no caption')
+assert(/^ok - windowSpanMs reads Opus 5 \(1M context\) Session$/m.test(output), "a model name's context size is not a cycle length")
+assert(/^ok - an already-reset window has no elapsed position$/m.test(output), 'a window past its reset is left unpaced')
+assert(/^ok - a window that has not started clamps to zero elapsed$/m.test(output), 'a window before its cycle clamps to zero')
 JS
