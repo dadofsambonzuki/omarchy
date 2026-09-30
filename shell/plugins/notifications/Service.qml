@@ -52,13 +52,22 @@ Item {
   readonly property int liveBarSize: shell && shell.bar && !shell.bar.barHidden ? Math.max(0, shell.bar.barSize) : defaultBarSize
   readonly property int barClearance: liveBarSize + Style.gapsOut
 
-  // Any output showing a fullscreen window. A toast is an Overlay-layer
-  // surface, so a fullscreen client cannot cover one; the shell's answer is the
-  // same one it gives for DND — no toast, a history entry instead (see
-  // handleNotification) — and any toast already on screen is held back rather
-  // than expiring unseen. Resolved per monitor's active workspace, so a
-  // fullscreen window on a workspace nobody is showing silences nothing.
-  readonly property bool fullscreenActive: NotificationLogic.anyWorkspaceHoldsFullscreen(Hyprland.monitors)
+  // The monitors the shell draws popups on: one window per screen (see the
+  // popup UI below), so these are the only outputs a toast can be delivered to.
+  readonly property var screenMonitors: Quickshell.screens.map(function(screen) {
+    return Hyprland.monitorFor(screen)
+  })
+
+  // Every output covered by a fullscreen window means there is nowhere left to
+  // show a toast, so the notification is silenced the way DND silences it: no
+  // toast, a history entry instead. Creating one would only queue it behind the
+  // fullscreen window where nobody can see or dismiss it.
+  //
+  // One covered output is not enough to silence: the toast is delivered to the
+  // screens that are free, and only the covered output holds its surface back.
+  // The condition is per monitor's active workspace, so a fullscreen window on
+  // a workspace nobody is showing covers nothing.
+  readonly property bool everyOutputCovered: NotificationLogic.everyWorkspaceHoldsFullscreen(screenMonitors)
 
   // Live Notification objects by originalId, kept OUT of the ListModels: a
   // QObject stored in a model role becomes a dangling C++ pointer when the
@@ -180,15 +189,12 @@ Item {
     // visibility, so critical alone isn't enough — we also require the
     // sender to be CLI-style. See shouldBypassDnd().
     //
-    // A fullscreen window silences for the same reason DND does, and takes the
-    // same route out: the toast is never created, so the notification is written
-    // into history and the notification centre shows what came in over it.
-    // Pausing instead would only grow the stack behind the fullscreen window,
-    // and letting the stack keep running would expire toasts the user cannot
-    // see. The bypass above still applies: a critical CLI alert or an
-    // omarchy-action confirmation is created, and the popup window holds its
-    // surface back until the fullscreen window goes away.
-    if ((service.doNotDisturb || service.fullscreenActive) && !shouldBypassDnd(notification)) {
+    // A fullscreen window covering every output silences for the same reason
+    // DND does, and takes the same route out: the toast is never created, so
+    // the notification is written into history and the notification centre
+    // shows what came in while the screen was covered. One covered output is
+    // not enough — a toast still reaches the screens that are free.
+    if ((service.doNotDisturb || service.everyOutputCovered) && !shouldBypassDnd(notification)) {
       // The toast never shows, so the only record a silenced notification
       // can leave is a history entry. Write it straight into history —
       // "what did I miss while silenced" is exactly what history is for.
@@ -1019,13 +1025,16 @@ Item {
       required property var modelData
       screen: modelData
 
-      // Overlay layer means a fullscreen client cannot cover a toast, so a
-      // toast would sit on top of the fullscreen video or game it is meant to
-      // stay out of the way of. Any toast still on screen when a fullscreen
-      // window appears is held back here — hidden, not dismissed — while
-      // notifications arriving in the meantime are silenced in
-      // handleNotification and leave a history entry instead.
-      visible: popupModel.count > 0 && !service.fullscreenActive
+      // Overlay layer means a fullscreen client cannot cover a toast, so this
+      // output's surface is held back while a fullscreen window covers it. The
+      // outputs that are not covered keep showing their toasts, and the
+      // countdown keeps running: a toast delivered to a free screen is
+      // delivered, not parked. When every output is covered there is no toast
+      // to hide in the first place — arrivals are silenced instead.
+      readonly property var hyprlandMonitor: Hyprland.monitorFor(modelData)
+      readonly property bool covered: NotificationLogic.workspaceHoldsFullscreen(
+        hyprlandMonitor ? hyprlandMonitor.activeWorkspace : null)
+      visible: popupModel.count > 0 && !popupWindow.covered
 
       WlrLayershell.namespace: "omarchy-notifications"
       WlrLayershell.layer: WlrLayer.Overlay
@@ -1096,10 +1105,7 @@ Item {
             Timer {
               interval: 50
               repeat: true
-              // A toast still on screen when a fullscreen window appears keeps
-              // the lifetime it had left and resumes its countdown when that
-              // window goes away, instead of expiring while nobody can see it.
-              running: cardSlot.ticking && !service.fullscreenActive
+              running: cardSlot.ticking
               onTriggered: {
                 if (cardSlot.lifetime <= 0) return
                 cardSlot.remainingLifetime -= 50.0 / cardSlot.lifetime

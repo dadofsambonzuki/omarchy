@@ -40,19 +40,20 @@ fresh notification reusing an old id must not dismiss or replace them.
 ## Fullscreen
 
 Toasts are Overlay-layer surfaces, so they draw over a fullscreen client
-whatever the layer ordering. While any output is showing a fullscreen window the
-service silences like DND: the toast is never created and the notification is
-written into history instead, so the notification centre still shows what came
-in over the fullscreen window, and nothing piles up behind it.
+whatever the layer ordering. The popup window for the output a fullscreen window
+covers is held back while it covers it: the other outputs keep showing their
+toasts, and their countdowns keep running, so a film playing fullscreen on one
+screen still delivers notifications on the others.
 
-Toasts already on screen when the fullscreen window appears are held back
-rather than silenced — the surface is hidden and the countdown pauses — so they
-come back, with the lifetime they had left, when the fullscreen window goes
-away, instead of expiring where nobody can see them. The DND bypasses still
-punch through and are created as normal; their surface waits with the others.
+When *every* output is covered there is nowhere left to deliver a toast, so the
+notification is silenced the way DND silences it: no toast, a history entry
+instead, which the notification centre shows. A toast already on screen when the
+fullscreen window appears is hidden with the surface and expires on schedule —
+nothing is parked, because one shared stack and one shared expiry serve every
+output, so a per-output wait has nothing to hold.
 
-The condition is per workspace on show, not per output: a fullscreen window on a
-workspace nobody is showing silences nothing. It reads the Wayland toplevel's
+The condition is per monitor's active workspace: a fullscreen window on a
+workspace nobody is showing covers nothing. It reads the Wayland toplevel's
 fullscreen state, not the workspace's `hasFullscreen` flag, which is also set
 for a merely maximized window.
 

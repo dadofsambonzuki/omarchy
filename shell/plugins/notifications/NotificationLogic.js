@@ -482,9 +482,9 @@ function workspaceToplevels(workspace) {
   return toplevels && toplevels.length ? toplevels : []
 }
 
-// The workspace an output is *showing*, which is not the focused one: a
-// fullscreen window covers its own output only, and one parked on a workspace
-// nobody is showing covers nothing.
+// Whether the workspace an output is showing is covered by a fullscreen window
+// — the condition that holds that output's toasts back. Surfaces are per
+// output, so this is asked per output; nothing global is decided here.
 function workspaceHoldsFullscreen(workspace) {
   var toplevels = workspaceToplevels(workspace)
   for (var i = 0; i < toplevels.length; i++) {
@@ -493,18 +493,24 @@ function workspaceHoldsFullscreen(workspace) {
   return false
 }
 
-// Whether any output on show has a fullscreen window. A fullscreen client
-// cannot cover an Overlay-layer toast, so this is the condition the service
-// silences on. It applies to every output at once: the toast stack is shared,
-// so there is no "quiet on the covered output only" to express.
-function anyWorkspaceHoldsFullscreen(monitors) {
+// Whether *every* output is covered, i.e. there is nowhere left to deliver a
+// toast. Then the notification is silenced the way DND silences it, instead of
+// being created to queue up behind a fullscreen window. A toast wait here would
+// have to be a decision about one shared stack: the stack and its expiry serve
+// every output, so holding a toast back for one output either expires it under
+// that output (the other output's countdown removes the row for everyone) or
+// stops every output's toasts from ever expiring.
+//
+// Read the monitors the shell draws on, not every monitor Hyprland knows: an
+// output with no popup window is not a delivery target either way.
+function everyWorkspaceHoldsFullscreen(monitors) {
   var list = Array.isArray(monitors) ? monitors : (monitors ? monitors.values : null)
   if (!list || !list.length) return false
   for (var i = 0; i < list.length; i++) {
     var monitor = list[i]
-    if (workspaceHoldsFullscreen(monitor ? monitor.activeWorkspace : null)) return true
+    if (!monitor || !workspaceHoldsFullscreen(monitor.activeWorkspace)) return false
   }
-  return false
+  return true
 }
 
 if (typeof module !== "undefined") {
@@ -538,6 +544,6 @@ if (typeof module !== "undefined") {
     popupExpired: popupExpired,
     popupPlacement: popupPlacement,
     workspaceHoldsFullscreen: workspaceHoldsFullscreen,
-    anyWorkspaceHoldsFullscreen: anyWorkspaceHoldsFullscreen
+    everyWorkspaceHoldsFullscreen: everyWorkspaceHoldsFullscreen
   }
 }
