@@ -493,11 +493,10 @@ function workspaceHoldsFullscreen(workspace) {
   return false
 }
 
-// Whether any output on show has a fullscreen window. The toast stack and the
-// expiry that removes a toast from it are shared by every output, so the
-// countdown pauses on all of them at once: a toast held back on the covered
-// output must not be expired under it by the copy on an output still showing
-// it, or leaving fullscreen would show nothing at all.
+// Whether any output on show has a fullscreen window. A fullscreen client
+// cannot cover an Overlay-layer toast, so this is the condition the service
+// silences on. It applies to every output at once: the toast stack is shared,
+// so there is no "quiet on the covered output only" to express.
 function anyWorkspaceHoldsFullscreen(monitors) {
   var list = Array.isArray(monitors) ? monitors : (monitors ? monitors.values : null)
   if (!list || !list.length) return false

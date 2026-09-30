@@ -52,12 +52,13 @@ Item {
   readonly property int liveBarSize: shell && shell.bar && !shell.bar.barHidden ? Math.max(0, shell.bar.barSize) : defaultBarSize
   readonly property int barClearance: liveBarSize + Style.gapsOut
 
-  // The toast stack, and the expiry that removes a toast from it, are shared by
-  // every output. So the countdowns pause on all of them while any output has a
-  // fullscreen window, even though only the covered output's popup surface is
-  // hidden: otherwise the copy on an output still showing the toast would
-  // expire it out from under the output holding it back.
-  readonly property bool fullscreenAnywhere: NotificationLogic.anyWorkspaceHoldsFullscreen(Hyprland.monitors)
+  // Any output showing a fullscreen window. A toast is an Overlay-layer
+  // surface, so a fullscreen client cannot cover one; the shell's answer is the
+  // same one it gives for DND — no toast, a history entry instead (see
+  // handleNotification) — and any toast already on screen is held back rather
+  // than expiring unseen. Resolved per monitor's active workspace, so a
+  // fullscreen window on a workspace nobody is showing silences nothing.
+  readonly property bool fullscreenActive: NotificationLogic.anyWorkspaceHoldsFullscreen(Hyprland.monitors)
 
   // Live Notification objects by originalId, kept OUT of the ListModels: a
   // QObject stored in a model role becomes a dangling C++ pointer when the
@@ -178,7 +179,16 @@ Item {
     // DND bypass rules: chat apps abuse urgency=critical to force
     // visibility, so critical alone isn't enough — we also require the
     // sender to be CLI-style. See shouldBypassDnd().
-    if (service.doNotDisturb && !shouldBypassDnd(notification)) {
+    //
+    // A fullscreen window silences for the same reason DND does, and takes the
+    // same route out: the toast is never created, so the notification is written
+    // into history and the notification centre shows what came in over it.
+    // Pausing instead would only grow the stack behind the fullscreen window,
+    // and letting the stack keep running would expire toasts the user cannot
+    // see. The bypass above still applies: a critical CLI alert or an
+    // omarchy-action confirmation is created, and the popup window holds its
+    // surface back until the fullscreen window goes away.
+    if ((service.doNotDisturb || service.fullscreenActive) && !shouldBypassDnd(notification)) {
       // The toast never shows, so the only record a silenced notification
       // can leave is a history entry. Write it straight into history —
       // "what did I miss while silenced" is exactly what history is for.
@@ -1011,16 +1021,11 @@ Item {
 
       // Overlay layer means a fullscreen client cannot cover a toast, so a
       // toast would sit on top of the fullscreen video or game it is meant to
-      // stay out of the way of. Resolve the workspace this output is showing —
-      // the same monitor/workspace pair the background plugin pauses a
-      // wallpaper on — and let a fullscreen window on it hold the toasts back.
-      readonly property var hyprlandMonitor: Hyprland.monitorFor(modelData)
-      readonly property var visibleWorkspace: hyprlandMonitor ? hyprlandMonitor.activeWorkspace : null
-      readonly property bool fullscreenHere: NotificationLogic.workspaceHoldsFullscreen(visibleWorkspace)
-
-      // Hidden rather than dismissed: the stack keeps its place and the toasts
-      // come back when the fullscreen window goes away.
-      visible: popupModel.count > 0 && !popupWindow.fullscreenHere
+      // stay out of the way of. Any toast still on screen when a fullscreen
+      // window appears is held back here — hidden, not dismissed — while
+      // notifications arriving in the meantime are silenced in
+      // handleNotification and leave a history entry instead.
+      visible: popupModel.count > 0 && !service.fullscreenActive
 
       WlrLayershell.namespace: "omarchy-notifications"
       WlrLayershell.layer: WlrLayer.Overlay
@@ -1091,12 +1096,10 @@ Item {
             Timer {
               interval: 50
               repeat: true
-              // A toast held back behind a fullscreen window keeps the lifetime
-              // it had left and resumes its countdown when that window closes,
-              // instead of expiring unseen while it was hidden. Paused on every
-              // output, because one shared expiry removes the toast everywhere
-              // (see service.fullscreenAnywhere).
-              running: cardSlot.ticking && !service.fullscreenAnywhere
+              // A toast still on screen when a fullscreen window appears keeps
+              // the lifetime it had left and resumes its countdown when that
+              // window goes away, instead of expiring while nobody can see it.
+              running: cardSlot.ticking && !service.fullscreenActive
               onTriggered: {
                 if (cardSlot.lifetime <= 0) return
                 cardSlot.remainingLifetime -= 50.0 / cardSlot.lifetime

@@ -757,24 +757,28 @@ assert(
 )
 
 // A toast is an Overlay-layer surface, so a fullscreen client cannot cover it.
-// The popup window for the output showing that client hides its surface, while
-// the countdowns pause on every output, because one shared stack and one shared
-// expiry serve them all.
+// Notifications arriving while one is on screen are silenced like DND, and a
+// toast already on screen is held back — surface hidden, countdown paused —
+// rather than expiring where nobody can see it.
 assert(
   /^import Quickshell\.Hyprland$/m.test(serviceQml),
-  'notifications service resolves the workspace each popup window is showing'
+  'notifications service can tell when an output is showing a fullscreen window'
 )
 assert(
-  /readonly property var visibleWorkspace: hyprlandMonitor \? hyprlandMonitor\.activeWorkspace : null/.test(serviceQml),
-  'notifications popups guard on the workspace on show, not on the focused one'
+  /readonly property bool fullscreenActive: NotificationLogic\.anyWorkspaceHoldsFullscreen\(Hyprland\.monitors\)/.test(serviceQml),
+  'notifications silence on a fullscreen window anywhere on show'
 )
 assert(
-  /visible: popupModel\.count > 0 && !popupWindow\.fullscreenHere/.test(serviceQml),
-  'notification popup surfaces are hidden behind a fullscreen window'
+  /if \(\(service\.doNotDisturb \|\| service\.fullscreenActive\) && !shouldBypassDnd\(notification\)\)/.test(serviceQml),
+  'a fullscreen window silences a notification exactly the way DND does'
 )
 assert(
-  /running: cardSlot\.ticking && !service\.fullscreenAnywhere/.test(serviceQml),
-  'notification popup lifetimes pause on every output while one of them is covered'
+  /visible: popupModel\.count > 0 && !service\.fullscreenActive/.test(serviceQml),
+  'notification popup surfaces are held back behind a fullscreen window'
+)
+assert(
+  /running: cardSlot\.ticking && !service\.fullscreenActive/.test(serviceQml),
+  'notification popup lifetimes pause behind a fullscreen window'
 )
 // The decisions themselves, against the shapes Quickshell hands over.
 const fsToplevel = fullscreen => ({ wayland: { fullscreen: fullscreen } })
