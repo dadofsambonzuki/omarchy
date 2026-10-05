@@ -466,6 +466,10 @@ Item {
                 onPressed: function(mouse) {
                   root.cursorActive = true
                   root.selectedIndex = index
+                  // A drag's trailing click never arrives when the drop rebuilt the
+                  // model, so the flag has to be cleared by the press that follows
+                  // it rather than by a click that is not delivered.
+                  root.suppressClick = false
                   if (mouse.button !== Qt.LeftButton || !parent.isFavorite) return
                   var point = mapToItem(root, mouse.x, mouse.y)
                   root.beginDrag(index, parent.emoji, point.x, point.y)
