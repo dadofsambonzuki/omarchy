@@ -88,6 +88,84 @@ function filterEmojis(emojis, query, limit) {
   return out
 }
 
+// The grid is one flat list of cells: a heading owns a whole row, a section that
+// ends part-way through a row is padded out to the row end (otherwise every row
+// after it shifts sideways by the remainder), and every other cell is an emoji.
+// Building it here rather than in the QML keeps the layout, and the movement over
+// it, in one place a test can drive.
+function buildCells(emojis, favorites, query, limit, columns) {
+  var width = columns > 0 ? columns : 1
+  var cells = []
+
+  function heading(text) {
+    while (cells.length % width !== 0) cells.push({ emoji: "", heading: "" })
+    for (var i = 0; i < width; i++) cells.push({ emoji: "", heading: i === 0 ? text : "" })
+  }
+
+  function section(list) {
+    for (var i = 0; i < list.length; i++) cells.push({ emoji: list[i], heading: "" })
+  }
+
+  // Searching is a lookup, so the pinned row steps aside for the matches.
+  var pinned = normalizedQuery(query) ? [] : favoriteEmojis(emojis, favorites)
+  if (pinned.length > 0) {
+    heading("Favorites")
+    section(pinned)
+    heading("All")
+  }
+  section(filterEmojis(emojis, query, limit).map(function(item) { return item.e }))
+
+  return cells
+}
+
+function cellAt(cells, index) {
+  return index >= 0 && index < cells.length ? cells[index] : null
+}
+
+function isEmojiCell(cells, index) {
+  var cell = cellAt(cells, index)
+  return !!(cell && cell.emoji)
+}
+
+// Steps a cell at a time until an emoji cell, or off the grid: -1 lets the caller
+// wrap around instead of parking the cursor on a heading it cannot stand on.
+function stepTarget(cells, index, step) {
+  if (!step) return -1
+  while (index >= 0 && index < cells.length && !isEmojiCell(cells, index)) index += step
+  return index >= 0 && index < cells.length ? index : -1
+}
+
+// Row movement resolves inside the target row band rather than by index maths: a
+// heading row, a padded row end and a short pinned row all hold cells the cursor
+// may not stand on, so the band's nearest emoji to the current column wins. Bands
+// with no emoji at all are skipped, and -1 means there is nothing that way.
+function rowTarget(cells, columns, index, rowDelta) {
+  var width = columns > 0 ? columns : 1
+  if (!rowDelta || !isEmojiCell(cells, index)) return -1
+
+  var column = index % width
+  var band = Math.floor(index / width) + rowDelta
+
+  while (band >= 0 && band * width < cells.length) {
+    var start = band * width
+    var end = Math.min(start + width, cells.length)
+    var best = -1
+    var bestDistance = 0
+    for (var i = start; i < end; i++) {
+      if (!isEmojiCell(cells, i)) continue
+      var distance = Math.abs((i % width) - column)
+      if (best < 0 || distance < bestDistance) {
+        best = i
+        bestDistance = distance
+      }
+    }
+    if (best >= 0) return best
+    band += rowDelta
+  }
+
+  return -1
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     parseEmojis: parseEmojis,
@@ -96,6 +174,10 @@ if (typeof module !== "undefined") {
     moveFavorite: moveFavorite,
     favoriteEmojis: favoriteEmojis,
     normalizedQuery: normalizedQuery,
-    filterEmojis: filterEmojis
+    filterEmojis: filterEmojis,
+    buildCells: buildCells,
+    isEmojiCell: isEmojiCell,
+    stepTarget: stepTarget,
+    rowTarget: rowTarget
   }
 }

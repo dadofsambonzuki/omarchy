@@ -46,6 +46,8 @@ Item {
 
   // [emoji, …] — the pinned list, in file order, shown above everything else.
   property var favorites: []
+  // The grid as EmojiSearch.buildCells laid it out — what the cursor moves over.
+  property var cells: []
 
   // Click-and-hold on a pinned cell moves it. The grid is left alone for the
   // whole gesture, so the cell the pointer grabbed stays alive until the drop.
@@ -97,21 +99,16 @@ Item {
   }
 
   function rebuildDisplay() {
-    var out = EmojiSearch.filterEmojis(root.emojis, root.filterText, 1000)
-    root.filteredEmojis = out
+    root.cells = EmojiSearch.buildCells(root.emojis, root.favorites, root.filterText, 1000, columns)
+    root.filteredEmojis = EmojiSearch.filterEmojis(root.emojis, root.filterText, 1000)
 
     displayModel.clear()
-    // Searching is a lookup, so the pinned row steps aside for the matches.
-    var pinned = root.filterText ? [] : EmojiSearch.favoriteEmojis(root.emojis, root.favorites)
-    if (pinned.length > 0) {
-      root.appendHeading("Favorites")
-      root.appendEmojis(pinned)
-      root.appendHeading("All")
-    }
-    root.appendEmojis(out.map(function(item) { return item.e }))
+    for (var i = 0; i < root.cells.length; i++) displayModel.append(root.cells[i])
 
+    // The cursor may only stand on an emoji cell, so a rebuild that changes the
+    // sections re-seats it instead of clamping it onto a heading.
     if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    selectedIndex = Math.max(0, root.skipHeadings(selectedIndex, 1))
+    selectedIndex = Math.max(0, EmojiSearch.stepTarget(root.cells, selectedIndex, 1))
     cursorActive = displayModel.count > 0
 
     Qt.callLater(function() {
@@ -122,53 +119,46 @@ Item {
     })
   }
 
-  // A heading owns a whole grid row, and a section that ends part-way through a
-  // row would otherwise shift every row after it sideways — so pad to the row
-  // end first. Guard the modulus: columns is 0 until the card has been measured.
-  function appendHeading(text) {
-    var columns = root.columns > 0 ? root.columns : 1
-    while (displayModel.count % columns !== 0) displayModel.append({ emoji: "", heading: "" })
-    for (var i = 0; i < columns; i++) displayModel.append({ emoji: "", heading: i === 0 ? text : "" })
-  }
-
-  function appendEmojis(list) {
-    for (var i = 0; i < list.length; i++) displayModel.append({ emoji: list[i], heading: "" })
-  }
-
-  // Walks past heading cells; -1 when that runs off the grid.
-  function skipHeadings(index, step) {
-    while (index >= 0 && index < displayModel.count && !displayModel.get(index).emoji) index += step
-    return index < displayModel.count ? index : -1
-  }
-
-  function moveTo(index, step) {
-    if (displayModel.count === 0) return
-    index = Math.max(0, Math.min(displayModel.count - 1, index))
-    // Overshooting the top lands on the heading; settle on the first emoji.
-    var next = root.skipHeadings(index, step)
-    index = next >= 0 ? next : root.skipHeadings(index, 1)
+  function moveTo(index) {
+    if (index < 0 || index >= displayModel.count) return
     cursorActive = true
     selectedIndex = index
     // Near the top, reveal the heading above the first row.
     resultGrid.positionViewAtIndex(index < columns * 2 ? 0 : index, GridView.Contain)
   }
 
-  function select(delta) {
-    if (!cursorActive) return moveTo(delta < 0 ? displayModel.count - 1 : 0, delta)
-    // Wrap around: stepping left off the first emoji lands on the last one.
-    var next = root.skipHeadings((selectedIndex + delta + displayModel.count) % displayModel.count, delta)
-    moveTo(next < 0 ? displayModel.count - 1 : next, delta)
+  // The first emoji in the direction asked for, for when the cursor is not on a
+  // cell yet.
+  function seatCursor(backwards) {
+    var index = EmojiSearch.stepTarget(root.cells, backwards ? displayModel.count - 1 : 0, backwards ? -1 : 1)
+    return index >= 0 ? index : 0
   }
 
+  function select(delta) {
+    if (displayModel.count === 0) return
+    if (!cursorActive) return moveTo(root.seatCursor(delta < 0))
+    // Wrap around: stepping left off the first emoji lands on the last one.
+    var wrapped = (selectedIndex + delta + displayModel.count) % displayModel.count
+    var next = EmojiSearch.stepTarget(root.cells, wrapped, delta)
+    moveTo(next >= 0 ? next : root.seatCursor(delta < 0))
+  }
+
+  // Row and page movement resolve inside a row band, so a heading row, a padded
+  // row end and a short pinned row cannot send the cursor sideways: a column with
+  // no favorite above it lands on the nearest favorite instead.
   function selectRow(delta) {
-    if (!cursorActive) moveTo(delta < 0 ? displayModel.count - 1 : 0, delta)
-    else moveTo(selectedIndex + delta * columns, delta * columns)
+    if (displayModel.count === 0) return
+    if (!cursorActive) return moveTo(root.seatCursor(delta < 0))
+    var target = EmojiSearch.rowTarget(root.cells, columns, selectedIndex, delta)
+    if (target >= 0) moveTo(target)
   }
 
   function selectPage(delta) {
+    if (displayModel.count === 0) return
+    if (!cursorActive) return moveTo(root.seatCursor(delta < 0))
     var visibleRows = Math.max(1, Math.floor(resultGrid.height / cellHeight))
-    if (!cursorActive) moveTo(delta < 0 ? displayModel.count - 1 : 0, delta)
-    else moveTo(selectedIndex + delta * columns * visibleRows, delta * columns)
+    var target = EmojiSearch.rowTarget(root.cells, columns, selectedIndex, delta * visibleRows)
+    if (target >= 0) moveTo(target)
   }
 
   function setFilter(nextFilter) {
@@ -209,7 +199,7 @@ Item {
 
   function selectEmoji(emoji) {
     for (var i = 0; i < displayModel.count; i++) {
-      if (displayModel.get(i).emoji === emoji) return moveTo(i, 1)
+      if (displayModel.get(i).emoji === emoji) return moveTo(i)
     }
   }
 

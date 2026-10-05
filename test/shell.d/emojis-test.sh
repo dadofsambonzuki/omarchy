@@ -81,6 +81,7 @@ assertDeepEqual(
   ['b'],
   'a short favorite list is not padded out with emojis nobody chose'
 )
+
 JS
 
 TMPDIR=$(mktemp -d)
