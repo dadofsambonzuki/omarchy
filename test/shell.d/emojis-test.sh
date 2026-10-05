@@ -44,6 +44,43 @@ assertEqual(
   '\u{1F602}',
   'emoji filtering finds face with tears of joy'
 )
+
+assertDeepEqual(emojis.parseFavorites('["a","b"]'), ['a', 'b'], 'emoji favorites parse in file order')
+assertDeepEqual(emojis.parseFavorites('{'), [], 'invalid emoji favorites parse as empty')
+assertDeepEqual(emojis.parseFavorites('{"a":1}'), [], 'non-array emoji favorites parse as empty')
+assertDeepEqual(
+  emojis.parseFavorites('["a","a"," b ",7,null]'),
+  ['a', 'b'],
+  'emoji favorites drop duplicates, blanks and non-strings'
+)
+
+assertDeepEqual(emojis.toggleFavorite(['a'], 'b'), ['a', 'b'], 'favoriting appends so pinned cells stay put')
+assertDeepEqual(emojis.toggleFavorite(['a', 'b'], 'a'), ['b'], 'unfavoriting removes the emoji')
+assertDeepEqual(emojis.toggleFavorite(null, 'a'), ['a'], 'favoriting tolerates a missing list')
+assertDeepEqual(emojis.toggleFavorite(['a'], ''), ['a'], 'favoriting ignores an empty emoji')
+
+assertDeepEqual(emojis.moveFavorite(['a', 'b', 'c'], 'a', 'c'), ['b', 'c', 'a'], 'dragging a favorite forward drops it on the target cell')
+assertDeepEqual(emojis.moveFavorite(['a', 'b', 'c'], 'c', 'a'), ['c', 'a', 'b'], 'dragging a favorite back drops it on the target cell')
+assertDeepEqual(emojis.moveFavorite(['a', 'b'], 'a', 'a'), ['a', 'b'], 'dropping a favorite on itself changes nothing')
+assertDeepEqual(emojis.moveFavorite(['a', 'b'], 'a', 'typo'), ['a', 'b'], 'dropping a favorite outside the list changes nothing')
+
+assertDeepEqual(
+  emojis.favoriteEmojis(fixture, ['c', 'a']),
+  ['c', 'a'],
+  'favorite emojis keep the file order rather than the catalog order'
+)
+
+assertDeepEqual(
+  emojis.favoriteEmojis(fixture, ['typo', 'b']),
+  ['b'],
+  'favorite emojis ignore entries outside the catalog'
+)
+
+assertDeepEqual(
+  emojis.favoriteEmojis(fixture, ['b']),
+  ['b'],
+  'a short favorite list is not padded out with emojis nobody chose'
+)
 JS
 
 TMPDIR=$(mktemp -d)

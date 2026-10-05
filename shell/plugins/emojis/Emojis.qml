@@ -41,12 +41,31 @@ Item {
   property int cellWidth: Math.max(Style.space(44), Style.font.display + Style.spacing.md)
   property int cellHeight: Math.max(Style.space(44), Style.font.display + Style.spacing.md)
   property int columns: Math.floor((cardWidth - contentMargin * 2) / cellWidth)
+  // The card is measured only once visible; rebuild so the top rows fit.
+  onColumnsChanged: if (opened) rebuildDisplay()
+
+  // [emoji, …] — the pinned list, in file order, shown above everything else.
+  property var favorites: []
+
+  // Click-and-hold on a pinned cell moves it. The grid is left alone for the
+  // whole gesture, so the cell the pointer grabbed stays alive until the drop.
+  property bool dragging: false
+  property string dragEmoji: ""
+  property int dragTo: -1
+  property real dragX: 0
+  property real dragY: 0
+  property var dragOrigin: ({ x: 0, y: 0 })
+  property bool dragMoved: false
+  // A drag ends with a release, and Qt follows that with a click.
+  property bool suppressClick: false
 
   function open(payloadJson) {
     root.opened = true
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
+    // Read on every open so hand edits to the favorites file show up.
+    favoritesFile.reload()
     root.rebuildDisplay()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -71,65 +90,85 @@ Item {
     if (root.opened) root.rebuildDisplay()
   }
 
+  // The reload on open finishes after the first rebuild; refresh once it lands.
+  function loadFavorites(raw) {
+    root.favorites = EmojiSearch.parseFavorites(raw)
+    if (root.opened) root.rebuildDisplay()
+  }
+
   function rebuildDisplay() {
     var out = EmojiSearch.filterEmojis(root.emojis, root.filterText, 1000)
     root.filteredEmojis = out
 
     displayModel.clear()
-    for (var j = 0; j < out.length; j++) {
-      displayModel.append({ emoji: out[j].e, index: j })
+    // Searching is a lookup, so the pinned row steps aside for the matches.
+    var pinned = root.filterText ? [] : EmojiSearch.favoriteEmojis(root.emojis, root.favorites)
+    if (pinned.length > 0) {
+      root.appendHeading("Favorites")
+      root.appendEmojis(pinned)
+      root.appendHeading("All")
     }
+    root.appendEmojis(out.map(function(item) { return item.e }))
 
-    if (displayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    else if (selectedIndex < 0) selectedIndex = 0
+    if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
+    selectedIndex = Math.max(0, root.skipHeadings(selectedIndex, 1))
     cursorActive = displayModel.count > 0
 
     Qt.callLater(function() {
-      if (displayModel.count > 0) resultGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+      // Near the top, reveal the heading above the first row rather than
+      // scrolling the section heading out of the card.
+      if (displayModel.count > 0)
+        resultGrid.positionViewAtIndex(root.selectedIndex < columns * 2 ? 0 : root.selectedIndex, GridView.Contain)
     })
   }
 
-  function select(delta) {
+  // A heading owns a whole grid row, and a section that ends part-way through a
+  // row would otherwise shift every row after it sideways — so pad to the row
+  // end first. Guard the modulus: columns is 0 until the card has been measured.
+  function appendHeading(text) {
+    var columns = root.columns > 0 ? root.columns : 1
+    while (displayModel.count % columns !== 0) displayModel.append({ emoji: "", heading: "" })
+    for (var i = 0; i < columns; i++) displayModel.append({ emoji: "", heading: i === 0 ? text : "" })
+  }
+
+  function appendEmojis(list) {
+    for (var i = 0; i < list.length; i++) displayModel.append({ emoji: list[i], heading: "" })
+  }
+
+  // Walks past heading cells; -1 when that runs off the grid.
+  function skipHeadings(index, step) {
+    while (index >= 0 && index < displayModel.count && !displayModel.get(index).emoji) index += step
+    return index < displayModel.count ? index : -1
+  }
+
+  function moveTo(index, step) {
     if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-    } else {
-      selectedIndex = (selectedIndex + delta + displayModel.count) % displayModel.count
-    }
-    resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
+    index = Math.max(0, Math.min(displayModel.count - 1, index))
+    // Overshooting the top lands on the heading; settle on the first emoji.
+    var next = root.skipHeadings(index, step)
+    index = next >= 0 ? next : root.skipHeadings(index, 1)
+    cursorActive = true
+    selectedIndex = index
+    // Near the top, reveal the heading above the first row.
+    resultGrid.positionViewAtIndex(index < columns * 2 ? 0 : index, GridView.Contain)
+  }
+
+  function select(delta) {
+    if (!cursorActive) return moveTo(delta < 0 ? displayModel.count - 1 : 0, delta)
+    // Wrap around: stepping left off the first emoji lands on the last one.
+    var next = root.skipHeadings((selectedIndex + delta + displayModel.count) % displayModel.count, delta)
+    moveTo(next < 0 ? displayModel.count - 1 : next, delta)
   }
 
   function selectRow(delta) {
-    if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-      resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-      return
-    }
-    var newIndex = selectedIndex + delta * columns
-    if (newIndex < 0) newIndex = 0
-    if (newIndex >= displayModel.count) newIndex = displayModel.count - 1
-    selectedIndex = newIndex
-    resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
+    if (!cursorActive) moveTo(delta < 0 ? displayModel.count - 1 : 0, delta)
+    else moveTo(selectedIndex + delta * columns, delta * columns)
   }
 
   function selectPage(delta) {
-    if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-      resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-      return
-    }
     var visibleRows = Math.max(1, Math.floor(resultGrid.height / cellHeight))
-    var newIndex = selectedIndex + delta * columns * visibleRows
-    if (newIndex < 0) newIndex = 0
-    if (newIndex >= displayModel.count) newIndex = displayModel.count - 1
-    selectedIndex = newIndex
-    resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
+    if (!cursorActive) moveTo(delta < 0 ? displayModel.count - 1 : 0, delta)
+    else moveTo(selectedIndex + delta * columns * visibleRows, delta * columns)
   }
 
   function setFilter(nextFilter) {
@@ -151,7 +190,80 @@ Item {
     Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-menu-emoji-insert", emoji])
   }
 
+  // Pinning is never a plain click, because a click in this picker inserts:
+  // Ctrl+F or a right-click toggles instead.
+  function toggleFavorite(index) {
+    if (index < 0 || index >= displayModel.count) return
+    var emoji = displayModel.get(index).emoji
+    if (!emoji) return
+    root.favorites = EmojiSearch.toggleFavorite(root.favorites, emoji)
+    root.saveFavorites()
+    root.rebuildDisplay()
+    // The cell moves between sections; put the cursor back on it.
+    root.selectEmoji(emoji)
+  }
+
+  function saveFavorites() {
+    favoritesFile.setText(JSON.stringify(root.favorites) + "\n")
+  }
+
+  function selectEmoji(emoji) {
+    for (var i = 0; i < displayModel.count; i++) {
+      if (displayModel.get(i).emoji === emoji) return moveTo(i, 1)
+    }
+  }
+
+  function beginDrag(index, emoji, rootX, rootY) {
+    root.dragging = true
+    root.dragEmoji = emoji
+    root.dragTo = index
+    root.dragMoved = false
+    root.dragX = rootX
+    root.dragY = rootY
+    root.dragOrigin = { x: rootX, y: rootY }
+  }
+
+  function updateDrag(rootX, rootY) {
+    if (!root.dragging) return
+    root.dragX = rootX
+    root.dragY = rootY
+    if (!root.dragMoved && (Math.abs(rootX - root.dragOrigin.x) > 6 || Math.abs(rootY - root.dragOrigin.y) > 6))
+      root.dragMoved = true
+    // Only pinned cells are drop targets, so a drag past the section keeps the
+    // last one it was over.
+    var point = resultGrid.mapFromItem(root, rootX, rootY)
+    var target = resultGrid.indexAt(point.x, point.y)
+    if (target < 0 || target >= displayModel.count) return
+    var cell = displayModel.get(target)
+    if (cell.emoji && root.favorites.indexOf(cell.emoji) >= 0) root.dragTo = target
+  }
+
+  function endDrag() {
+    var emoji = root.dragEmoji
+    var moved = root.dragMoved
+    var target = root.dragTo
+    root.dragging = false
+    root.dragEmoji = ""
+    root.dragTo = -1
+    // A drag that never left its cell was a click, and a click inserts.
+    root.suppressClick = moved
+    if (!moved || target < 0 || target >= displayModel.count) return
+    root.favorites = EmojiSearch.moveFavorite(root.favorites, emoji, displayModel.get(target).emoji)
+    root.saveFavorites()
+    root.rebuildDisplay()
+    root.selectEmoji(emoji)
+  }
+
   ListModel { id: displayModel }
+
+  FileView {
+    id: favoritesFile
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/emoji-favorites.json"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.loadFavorites(text())
+    onLoadFailed: root.loadFavorites("")
+  }
 
   FileView {
     path: root.omarchyPath + "/shell/plugins/emojis/emojis.json"
@@ -191,7 +303,10 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Escape) {
+          if (event.key === Qt.Key_F && (event.modifiers & Qt.ControlModifier)) {
+            root.toggleFavorite(root.selectedIndex)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Escape) {
             if (root.filterText) root.setFilter("")
             else root.dismiss()
             event.accepted = true
@@ -271,13 +386,17 @@ Item {
             delegate: Rectangle {
               required property int index
               required property string emoji
+              required property string heading
 
-              readonly property bool hasCursor: root.cursorActive && index === root.selectedIndex
+              readonly property bool hasCursor: root.cursorActive && index === root.selectedIndex && emoji !== ""
+              readonly property bool isFavorite: emoji !== "" && root.favorites.indexOf(emoji) >= 0
+              readonly property bool isDragTarget: root.dragging && index === root.dragTo && emoji !== ""
 
               width: root.cellWidth
               height: root.cellHeight
               radius: root.cornerRadius
               color: hasCursor ? root.selectedBackground : "transparent"
+              opacity: root.dragging && emoji !== "" && emoji === root.dragEmoji ? 0.35 : 1
 
               Text {
                 textFormat: Text.PlainText
@@ -289,18 +408,88 @@ Item {
                 verticalAlignment: Text.AlignVCenter
               }
 
+              // Nerd Font star (U+F005). The menu font is the same family the
+              // empty state draws its nerd glyph with, so the fallback covers it.
+              Text {
+                textFormat: Text.PlainText
+                visible: parent.isFavorite
+                text: "\uf005"
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.topMargin: Style.spacing.sm
+                anchors.rightMargin: Style.spacing.sm
+                color: root.foreground
+                opacity: 0.55
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Rectangle {
+                anchors.fill: parent
+                visible: parent.isDragTarget
+                radius: root.cornerRadius
+                color: "transparent"
+                border.width: Math.max(1, Style.space(1))
+                border.color: root.foreground
+                opacity: 0.45
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                visible: parent.heading !== ""
+                text: parent.heading
+                width: resultGrid.width
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Style.spacing.sm
+                leftPadding: Style.spacing.md
+                color: root.foreground
+                opacity: 0.58
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+              }
+
               MouseArea {
                 id: mouseArea
                 anchors.fill: parent
+                enabled: parent.emoji !== ""
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
                 hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
+                // A drag over a pinned cell is a reorder, not a scroll.
+                preventStealing: parent.isFavorite
+                cursorShape: parent.isFavorite ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.PointingHandCursor
+
                 onContainsMouseChanged: if (containsMouse) {
                   root.cursorActive = true
                   root.selectedIndex = index
                 }
-                onClicked: {
+
+                onPressed: function(mouse) {
                   root.cursorActive = true
                   root.selectedIndex = index
+                  if (mouse.button !== Qt.LeftButton || !parent.isFavorite) return
+                  var point = mapToItem(root, mouse.x, mouse.y)
+                  root.beginDrag(index, parent.emoji, point.x, point.y)
+                }
+
+                onPositionChanged: function(mouse) {
+                  if (!root.dragging) return
+                  var point = mapToItem(root, mouse.x, mouse.y)
+                  root.updateDrag(point.x, point.y)
+                }
+
+                onReleased: if (root.dragging) root.endDrag()
+
+                onClicked: function(mouse) {
+                  root.cursorActive = true
+                  root.selectedIndex = index
+                  if (root.suppressClick) {
+                    root.suppressClick = false
+                    return
+                  }
+                  if (mouse.button === Qt.RightButton || (mouse.modifiers & Qt.ControlModifier)) {
+                    root.toggleFavorite(index)
+                    return
+                  }
                   root.activateIndex(index)
                 }
               }
@@ -333,6 +522,26 @@ Item {
               width: parent.width
             }
           }
+        }
+      }
+
+      // Follows the pointer while a pinned cell is being dragged.
+      Rectangle {
+        visible: root.dragging
+        width: root.cellWidth
+        height: root.cellHeight
+        radius: root.cornerRadius
+        color: root.selectedBackground
+        opacity: 0.9
+        x: card.mapFromItem(root, root.dragX, root.dragY).x - width / 2
+        y: card.mapFromItem(root, root.dragX, root.dragY).y - height / 2
+
+        Text {
+          textFormat: Text.PlainText
+          text: root.dragEmoji
+          anchors.centerIn: parent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.display
         }
       }
     }
