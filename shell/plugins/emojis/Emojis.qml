@@ -54,13 +54,9 @@ Item {
   property bool favoritesReady: false
   property int favoritesLoadError: FileViewError.Success
   property bool favoritesWritable: false
-  // A change made while the file is mid-read. It is a delta on whatever the file
-  // holds, so it waits for that read and is re-applied on top of it: writing first
-  // would replace the list the read was about to bring back.
-  property var favoritesPendingEdits: []
-  // A read is in flight: writing now would be writing a list the file is about to
-  // supersede, so changes wait for it instead.
-  property bool favoritesLoadPending: true
+  // No file yet, so there is nothing to watch: a list seeded after the shell
+  // started is only found by looking again.
+  property bool favoritesAbsent: false
   readonly property bool favoritesSavable: root.favoritesReady && root.favoritesWritable
 
   // Click-and-hold on a pinned cell moves it. The grid is left alone for the
@@ -80,9 +76,10 @@ Item {
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
-    // Read on every open as well as watching: a file seeded by hand while the shell
-    // was running is not something the watcher ever saw appear.
-    root.reloadFavorites()
+    // Only while there is no file to watch: an edit to a file that exists is seen
+    // by the watcher, and reading a file we already know costs a write race for
+    // nothing.
+    if (root.favoritesAbsent) favoritesFile.reload()
     root.rebuildDisplay()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -107,43 +104,25 @@ Item {
     if (root.opened) root.rebuildDisplay()
   }
 
-  // Every read goes through here so the pending flag and the reload stay in step.
-  function reloadFavorites() {
-    root.favoritesLoadPending = true
-    favoritesFile.reload()
-  }
-
   // The reload on open finishes after the first rebuild; refresh once it lands.
   function loadFavorites(raw) {
-    root.favoritesLoadPending = false
     root.favoritesLoadError = FileViewError.Success
     root.favoritesReady = true
     root.favoritesWritable = EmojiSearch.favoritesAreValid(raw)
+    root.favoritesAbsent = false
     root.favorites = EmojiSearch.parseFavorites(raw)
-    if (root.favoritesWritable) root.applyPendingEdits()
     if (root.opened) root.rebuildDisplay()
   }
 
   // A missing file is a first run, so it may be written; a file that exists but
   // could not be read is not ours to replace.
   function favoritesLoadFailed(error) {
-    root.favoritesLoadPending = false
     root.favoritesLoadError = error
     root.favoritesReady = true
     root.favoritesWritable = error === FileViewError.FileNotFound
+    root.favoritesAbsent = error === FileViewError.FileNotFound
     root.favorites = []
-    if (root.favoritesWritable) root.applyPendingEdits()
     if (root.opened) root.rebuildDisplay()
-  }
-
-  // Changes made while that read was in flight go on top of what it brought back,
-  // then out to the file — the read's content is the base, the change is the delta.
-  function applyPendingEdits() {
-    var edits = root.favoritesPendingEdits
-    if (edits.length === 0) return
-    root.favoritesPendingEdits = []
-    for (var i = 0; i < edits.length; i++) root.favorites = root.editFavorites(root.favorites, edits[i])
-    root.writeFavorites()
   }
 
   function rebuildDisplay() {
@@ -235,33 +214,18 @@ Item {
     if (index < 0 || index >= displayModel.count) return
     var emoji = displayModel.get(index).emoji
     if (!emoji) return
-    root.commitFavoriteEdit({ kind: "toggle", emoji: emoji })
+    root.favorites = EmojiSearch.toggleFavorite(root.favorites, emoji)
+    root.saveFavorites()
     root.rebuildDisplay()
     // The cell moves between sections; put the cursor back on it.
     root.selectEmoji(emoji)
   }
 
-  // Every pin and move goes through here, so a change made while the file is being
-  // read waits for that read rather than being written over by it.
-  function commitFavoriteEdit(edit) {
+  function saveFavorites() {
     if (!root.favoritesSavable) {
       console.warn("emoji favorites save skipped: the list cannot be read or replaced")
       return false
     }
-    root.favorites = root.editFavorites(root.favorites, edit)
-    if (root.favoritesLoadPending) {
-      root.favoritesPendingEdits = root.favoritesPendingEdits.concat([edit])
-      return false
-    }
-    return root.writeFavorites()
-  }
-
-  function editFavorites(list, edit) {
-    if (edit.kind === "move") return EmojiSearch.moveFavorite(list, edit.emoji, edit.before)
-    return EmojiSearch.toggleFavorite(list, edit.emoji)
-  }
-
-  function writeFavorites() {
     favoritesFile.setText(JSON.stringify(root.favorites) + "\n")
     return true
   }
@@ -308,7 +272,8 @@ Item {
     root.suppressClick = moved
     if (!moved || target < 0 || target >= displayModel.count) return
     if (!root.favoritesSavable) return
-    root.commitFavoriteEdit({ kind: "move", emoji: emoji, before: displayModel.get(target).emoji })
+    root.favorites = EmojiSearch.moveFavorite(root.favorites, emoji, displayModel.get(target).emoji)
+    root.saveFavorites()
     root.rebuildDisplay()
     root.selectEmoji(emoji)
   }
@@ -320,12 +285,12 @@ Item {
     path: Quickshell.env("HOME") + "/.local/state/omarchy/emoji-favorites.json"
     atomicWrites: true
     printErrors: false
-    // Watched as well as re-read on open: an edit made while the picker is open
-    // shows up, and a seed written after a failed startup read is picked up too.
+    // Watched, so an edit made while the picker is open shows up — and a file that
+    // did not exist at startup (nothing there to watch) is read again on open.
     watchChanges: true
     onLoaded: root.loadFavorites(text())
     onLoadFailed: function(error) { root.favoritesLoadFailed(error) }
-    onFileChanged: root.reloadFavorites()
+    onFileChanged: reload()
   }
 
   FileView {
