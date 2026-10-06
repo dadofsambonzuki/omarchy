@@ -54,6 +54,9 @@ Item {
   property bool favoritesReady: false
   property int favoritesLoadError: FileViewError.Success
   property bool favoritesWritable: false
+  // A read is applied only while it is still the newest thing that happened to the
+  // list: a read that a save has overtaken would put a stale list back in memory.
+  property bool favoritesLoadPending: true
   readonly property bool favoritesSavable: root.favoritesReady && root.favoritesWritable
 
   // Click-and-hold on a pinned cell moves it. The grid is left alone for the
@@ -73,6 +76,9 @@ Item {
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
+    // Read on every open as well as watching: a file seeded by hand while the shell
+    // was running is not something the watcher ever saw appear.
+    root.reloadFavorites()
     root.rebuildDisplay()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -97,8 +103,18 @@ Item {
     if (root.opened) root.rebuildDisplay()
   }
 
+  // Every read goes through here so the pending flag and the reload stay in step.
+  function reloadFavorites() {
+    root.favoritesLoadPending = true
+    favoritesFile.reload()
+  }
+
   // The reload on open finishes after the first rebuild; refresh once it lands.
   function loadFavorites(raw) {
+    // A read that a save has overtaken is dropped rather than putting its stale
+    // list back over the pin that came after it.
+    if (!root.favoritesLoadPending) return
+    root.favoritesLoadPending = false
     root.favoritesLoadError = FileViewError.Success
     root.favoritesReady = true
     root.favoritesWritable = EmojiSearch.favoritesAreValid(raw)
@@ -109,6 +125,8 @@ Item {
   // A missing file is a first run, so it may be written; a file that exists but
   // could not be read is not ours to replace.
   function favoritesLoadFailed(error) {
+    if (!root.favoritesLoadPending) return
+    root.favoritesLoadPending = false
     root.favoritesLoadError = error
     root.favoritesReady = true
     root.favoritesWritable = error === FileViewError.FileNotFound
@@ -217,6 +235,8 @@ Item {
       console.warn("emoji favorites save skipped: the list cannot be read or replaced")
       return false
     }
+    // Anything still in flight is older than this write.
+    root.favoritesLoadPending = false
     favoritesFile.setText(JSON.stringify(root.favorites) + "\n")
     return true
   }
@@ -276,12 +296,12 @@ Item {
     path: Quickshell.env("HOME") + "/.local/state/omarchy/emoji-favorites.json"
     atomicWrites: true
     printErrors: false
-    // Watched rather than re-read on every open: a hand edit shows up while the
-    // picker is open, and there is no per-open read for a pin to land inside.
+    // Watched as well as re-read on open: an edit made while the picker is open
+    // shows up, and a seed written after a failed startup read is picked up too.
     watchChanges: true
     onLoaded: root.loadFavorites(text())
     onLoadFailed: function(error) { root.favoritesLoadFailed(error) }
-    onFileChanged: reload()
+    onFileChanged: root.reloadFavorites()
   }
 
   FileView {
