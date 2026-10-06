@@ -73,10 +73,6 @@ Item {
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
-    // Read on every open so hand edits to the favorites file show up. Nothing is
-    // written until that read reports back.
-    root.favoritesReady = false
-    favoritesFile.reload()
     root.rebuildDisplay()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -280,8 +276,12 @@ Item {
     path: Quickshell.env("HOME") + "/.local/state/omarchy/emoji-favorites.json"
     atomicWrites: true
     printErrors: false
+    // Watched rather than re-read on every open: a hand edit shows up while the
+    // picker is open, and there is no per-open read for a pin to land inside.
+    watchChanges: true
     onLoaded: root.loadFavorites(text())
     onLoadFailed: function(error) { root.favoritesLoadFailed(error) }
+    onFileChanged: reload()
   }
 
   FileView {

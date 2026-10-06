@@ -245,9 +245,12 @@ assertEqual(host.saveFavorites(), false, 'an unreadable file is not replaced')
 disk = '["👍"]'
 host.fileLoaded()
 settle()
-host.favoritesReady = false        // open() re-reads before anything may be written
-settle()
-assertEqual(host.saveFavorites(), false, 'a save during an in-flight re-read is refused')
+// A later read — the file watcher picking up a hand edit — must not lock saving
+// again, or every pin after the first open would be dropped.
+host.favorites = ['👍', '🎉']
+assertEqual(host.favoritesSavable, true, 'a read after the first leaves saving enabled')
+assertEqual(host.saveFavorites(), true, 'so a pin after a later read still lands')
+assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🎉'], 'with the list in memory at that point')
 JS
 
 TMPDIR=$(mktemp -d)
