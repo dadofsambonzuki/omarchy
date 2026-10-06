@@ -343,6 +343,8 @@ Emojis you use all the time can be pinned to a `Favorites` row at the top of the
 ["👍", "🔥", "🎉", "❤️"]
 ```
 
+The picker writes that file only once it has read it, so a file it cannot read — or one that is not a JSON array — is shown as no favorites and left alone rather than being overwritten.
+
 | Hotkey       | EM | Clue       |
 | ------------ | -- | ---------- |
 | `CapsLock M S` | 😄 | smile      |

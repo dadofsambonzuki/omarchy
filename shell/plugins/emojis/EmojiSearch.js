@@ -45,6 +45,18 @@ function moveFavorite(favorites, emoji, before) {
   return list
 }
 
+// Whether the file on disk is one the picker may replace later: a JSON array.
+// A file that is missing, broken or some other shape is shown as no favorites and
+// then left alone, so the next pin cannot overwrite what we failed to read — the
+// same rule the shell applies to a shell.json it could not parse.
+function favoritesAreValid(raw) {
+  try {
+    return Array.isArray(JSON.parse(String(raw || "")))
+  } catch (e) {
+    return false
+  }
+}
+
 // Only emojis in the catalog can render, so a mistyped entry never takes a cell.
 // A pinned list is shown as it is: three favorites are three cells, not a row
 // padded out with emojis nobody chose.
@@ -170,6 +182,7 @@ if (typeof module !== "undefined") {
   module.exports = {
     parseEmojis: parseEmojis,
     parseFavorites: parseFavorites,
+    favoritesAreValid: favoritesAreValid,
     toggleFavorite: toggleFavorite,
     moveFavorite: moveFavorite,
     favoriteEmojis: favoriteEmojis,

@@ -48,6 +48,14 @@ Item {
   property var favorites: []
   // The grid as EmojiSearch.buildCells laid it out — what the cursor moves over.
   property var cells: []
+  // The file is read asynchronously, so a pin can arrive before the list it belongs
+  // to has been read: saving then would replace the user's favorites with whatever
+  // is in memory. Nothing is written until a read reports back, and a file we could
+  // not read or parse is never replaced — only a missing one (a first run) is.
+  property bool favoritesReady: false
+  property int favoritesLoadError: FileViewError.Success
+  property bool favoritesWritable: false
+  readonly property bool favoritesSavable: root.favoritesReady && root.favoritesWritable
 
   // Click-and-hold on a pinned cell moves it. The grid is left alone for the
   // whole gesture, so the cell the pointer grabbed stays alive until the drop.
@@ -66,7 +74,9 @@ Item {
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
-    // Read on every open so hand edits to the favorites file show up.
+    // Read on every open so hand edits to the favorites file show up. Nothing is
+    // written until that read reports back.
+    root.favoritesReady = false
     favoritesFile.reload()
     root.rebuildDisplay()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -94,7 +104,20 @@ Item {
 
   // The reload on open finishes after the first rebuild; refresh once it lands.
   function loadFavorites(raw) {
+    root.favoritesLoadError = FileViewError.Success
+    root.favoritesReady = true
+    root.favoritesWritable = EmojiSearch.favoritesAreValid(raw)
     root.favorites = EmojiSearch.parseFavorites(raw)
+    if (root.opened) root.rebuildDisplay()
+  }
+
+  // A missing file is a first run, so it may be written; a file that exists but
+  // could not be read is not ours to replace.
+  function favoritesLoadFailed(error) {
+    root.favoritesLoadError = error
+    root.favoritesReady = true
+    root.favoritesWritable = error === FileViewError.FileNotFound
+    root.favorites = []
     if (root.opened) root.rebuildDisplay()
   }
 
@@ -183,6 +206,7 @@ Item {
   // Pinning is never a plain click, because a click in this picker inserts:
   // Ctrl+F or a right-click toggles instead.
   function toggleFavorite(index) {
+    if (!root.favoritesSavable) return
     if (index < 0 || index >= displayModel.count) return
     var emoji = displayModel.get(index).emoji
     if (!emoji) return
@@ -194,7 +218,12 @@ Item {
   }
 
   function saveFavorites() {
+    if (!root.favoritesSavable) {
+      console.warn("emoji favorites save skipped: the list cannot be read or replaced")
+      return false
+    }
     favoritesFile.setText(JSON.stringify(root.favorites) + "\n")
+    return true
   }
 
   function selectEmoji(emoji) {
@@ -238,6 +267,7 @@ Item {
     // A drag that never left its cell was a click, and a click inserts.
     root.suppressClick = moved
     if (!moved || target < 0 || target >= displayModel.count) return
+    if (!root.favoritesSavable) return
     root.favorites = EmojiSearch.moveFavorite(root.favorites, emoji, displayModel.get(target).emoji)
     root.saveFavorites()
     root.rebuildDisplay()
@@ -252,7 +282,7 @@ Item {
     atomicWrites: true
     printErrors: false
     onLoaded: root.loadFavorites(text())
-    onLoadFailed: root.loadFavorites("")
+    onLoadFailed: function(error) { root.favoritesLoadFailed(error) }
   }
 
   FileView {

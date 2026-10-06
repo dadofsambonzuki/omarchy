@@ -39,11 +39,17 @@ assertDeepEqual(
   'emoji filtering supports zero result limit'
 )
 
-assertEqual(
-  emojis.filterEmojis(data, 'face with tears')[0].e,
+assertEqual(emojis.filterEmojis(data, 'face with tears')[0].e,
   '\u{1F602}',
   'emoji filtering finds face with tears of joy'
 )
+
+assertEqual(emojis.favoritesAreValid('["a"]'), true, 'a favorites array is a file the picker may replace')
+assertEqual(emojis.favoritesAreValid('[]'), true, 'an empty array is still a favorites file')
+assertEqual(emojis.favoritesAreValid(''), false, 'an empty file is not')
+assertEqual(emojis.favoritesAreValid('{'), false, 'a file that does not parse is not')
+assertEqual(emojis.favoritesAreValid('{"a":1}'), false, 'an object is not a favorites file')
+assertEqual(emojis.favoritesAreValid('"a"'), false, 'a bare string is not a favorites file')
 
 assertDeepEqual(emojis.parseFavorites('["a","b"]'), ['a', 'b'], 'emoji favorites parse in file order')
 assertDeepEqual(emojis.parseFavorites('{'), [], 'invalid emoji favorites parse as empty')
@@ -122,6 +128,114 @@ assertEqual(emojis.rowTarget(wideCells, 8, 26, -1), 10, 'up from a catalog colum
 assertEqual(emojis.rowTarget(wideCells, 8, 27, -1), 10, 'and the same for the column beyond it')
 assertEqual(emojis.rowTarget(wideCells, 8, 24, -1), 8, 'up from catalog column 0 lands on the pin in that column')
 assertEqual(emojis.rowTarget(wideCells, 8, 31, -1), 10, 'up from the far edge of the catalog band still lands on a pin')
+JS
+
+# The picker's favorites file is read asynchronously, so drive the QML's own
+# persistence seam with the read delayed behind a pin — the same shape as the
+# shell-config guard, on the plugin that writes a list of its own.
+run_node_test <<'JS'
+const fs = require('fs')
+const vm = require('vm')
+const emojis = requireFromRoot('shell/plugins/emojis/EmojiSearch.js')
+const source = fs.readFileSync(path.join(root, 'shell/plugins/emojis/Emojis.qml'), 'utf8')
+
+function extractFunction(name) {
+  const start = source.indexOf('  function ' + name + '(')
+  const end = source.indexOf('\n  }', start)
+  if (start < 0 || end < 0) throw new Error('missing function ' + name)
+  return source.slice(start, end + 4)
+}
+
+function extractHandler(signature) {
+  const start = source.indexOf(signature)
+  if (start < 0) throw new Error('missing ' + signature)
+  const line = source.slice(start + signature.length, source.indexOf('\n', start)).trim()
+  const open = line.indexOf('{')
+  if (open < 0) return line // a plain expression, not a function block
+  const close = line.lastIndexOf('}')
+  if (close <= open) throw new Error('unterminated ' + signature)
+  return line.slice(open + 1, close).trim()
+}
+
+function extractExpression(signature) {
+  const start = source.indexOf(signature)
+  if (start < 0) throw new Error('missing ' + signature)
+  return source.slice(start + signature.length, source.indexOf('\n', start)).trim()
+}
+
+// FileViewError as the shell's FileView reports it
+const errors = { Success: 0, FileNotFound: 1, PermissionDenied: 2, NotAFile: 3 }
+let disk = ''
+const writes = []
+const host = {
+  EmojiSearch: emojis,
+  FileViewError: errors,
+  favorites: [],
+  favoritesReady: false,
+  favoritesLoadError: errors.Success,
+  favoritesWritable: false,
+  opened: false,
+  rebuildDisplay: function() {},
+  console: { warn: function() {} },
+  // FileView's own text() accessor, which onLoaded hands to the loader
+  text: function() { return disk },
+  favoritesFile: {
+    text: function() { return disk },
+    setText: function(value) { writes.push(value) }
+  }
+}
+host.root = host
+vm.createContext(host)
+
+for (const name of ['loadFavorites', 'favoritesLoadFailed', 'saveFavorites'])
+  vm.runInContext(extractFunction(name), host)
+vm.runInContext('function fileLoaded() {' + extractHandler('onLoaded:') + '}', host)
+vm.runInContext('function fileLoadFailed(error) {' + extractHandler('onLoadFailed: function(error)') + '}', host)
+
+// Run the picker's own binding rather than restating the rule in the test.
+const savableExpression = extractExpression('readonly property bool favoritesSavable:')
+function settle() { host.favoritesSavable = vm.runInContext(savableExpression, host) }
+
+settle()
+assertEqual(host.favoritesSavable, false, 'nothing may be saved before the file has been read')
+host.favorites = ['👍']
+assertEqual(host.saveFavorites(), false, 'a pin before the read lands cannot write')
+assertEqual(writes.length, 0, 'and nothing reaches the file')
+
+disk = '["👍","🔥"]'
+host.fileLoaded()
+settle()
+assertDeepEqual(host.favorites, ['👍', '🔥'], 'the read supplies the list that was already there')
+host.favorites = ['👍', '🔥', '🎉']
+assertEqual(host.saveFavorites(), true, 'a save after the read is allowed')
+assertDeepEqual(JSON.parse(writes[0]), ['👍', '🔥', '🎉'], 'and keeps the favorites that were already there')
+
+for (const broken of ['["👍",', '{"a":1}', '']) {
+  disk = broken
+  host.fileLoaded()
+  settle()
+  const before = writes.length
+  assertDeepEqual(host.favorites, [], 'a favorites file we cannot use shows as no favorites: ' + JSON.stringify(broken))
+  assertEqual(host.saveFavorites(), false, 'and is never replaced by a save: ' + JSON.stringify(broken))
+  assertEqual(writes.length, before, 'so the file on disk is untouched: ' + JSON.stringify(broken))
+}
+
+host.fileLoadFailed(errors.FileNotFound)
+settle()
+assertEqual(host.favoritesReady, true, 'a failed read still finishes the initial read')
+assertEqual(host.favoritesSavable, true, 'a missing file is a first run and stays writable')
+
+host.fileLoadFailed(errors.PermissionDenied)
+settle()
+assertEqual(host.favoritesLoadError, errors.PermissionDenied, 'the read error is kept')
+assertEqual(host.saveFavorites(), false, 'an unreadable file is not replaced')
+
+disk = '["👍"]'
+host.fileLoaded()
+settle()
+host.favoritesReady = false        // open() re-reads before anything may be written
+settle()
+assertEqual(host.saveFavorites(), false, 'a save during an in-flight re-read is refused')
 JS
 
 TMPDIR=$(mktemp -d)
