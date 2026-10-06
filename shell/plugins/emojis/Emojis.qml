@@ -18,7 +18,6 @@ Item {
   property int selectedIndex: 0
   property bool cursorActive: false
   property var emojis: []
-  property var filteredEmojis: []
 
   // Shares the [menu] surface tokens — themes that style the menu also
   // style emojis. Selected-cell colors composed in the
@@ -123,7 +122,6 @@ Item {
 
   function rebuildDisplay() {
     root.cells = EmojiSearch.buildCells(root.emojis, root.favorites, root.filterText, 1000, columns)
-    root.filteredEmojis = EmojiSearch.filterEmojis(root.emojis, root.filterText, 1000)
 
     displayModel.clear()
     for (var i = 0; i < root.cells.length; i++) displayModel.append(root.cells[i])
