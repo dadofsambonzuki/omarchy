@@ -187,6 +187,7 @@ const host = {
   favoritesLoadError: errors.Success,
   favoritesWritable: false,
   favoritesLoadPending: true,
+  favoritesPendingEdits: [],
   opened: false,
   rebuildDisplay: function() {},
   console: { warn: function() {} },
@@ -202,7 +203,7 @@ const reloads = []
 host.root = host
 vm.createContext(host)
 
-for (const name of ['loadFavorites', 'favoritesLoadFailed', 'reloadFavorites', 'saveFavorites'])
+for (const name of ['loadFavorites', 'favoritesLoadFailed', 'reloadFavorites', 'applyPendingEdits', 'commitFavoriteEdit', 'editFavorites', 'writeFavorites'])
   vm.runInContext(extractFunction(name), host)
 vm.runInContext('function fileLoaded() {' + extractHandler('onLoaded:') + '}', host)
 vm.runInContext('function fileLoadFailed(error) {' + extractHandler('onLoadFailed: function(error)') + '}', host)
@@ -214,24 +215,23 @@ function settle() { host.favoritesSavable = vm.runInContext(savableExpression, h
 // A read the way the picker makes one: ask for it, then let it land.
 function readAs(contents) { disk = contents; host.reloadFavorites(); host.fileLoaded(); settle() }
 function failAs(error) { host.reloadFavorites(); host.fileLoadFailed(error); settle() }
+const pinned = emoji => host.commitFavoriteEdit({ kind: 'toggle', emoji: emoji })
 
 settle()
 assertEqual(host.favoritesSavable, false, 'nothing may be saved before the file has been read')
-host.favorites = ['👍']
-assertEqual(host.saveFavorites(), false, 'a pin before the read lands cannot write')
+assertEqual(pinned('👍'), false, 'a pin before the read lands cannot write')
 assertEqual(writes.length, 0, 'and nothing reaches the file')
 
 readAs('["👍","🔥"]')
 assertDeepEqual(host.favorites, ['👍', '🔥'], 'the read supplies the list that was already there')
-host.favorites = ['👍', '🔥', '🎉']
-assertEqual(host.saveFavorites(), true, 'a save after the read is allowed')
+assertEqual(pinned('🎉'), true, 'a pin after the read is allowed')
 assertDeepEqual(JSON.parse(writes[0]), ['👍', '🔥', '🎉'], 'and keeps the favorites that were already there')
 
 for (const broken of ['["👍",', '{"a":1}', '']) {
   readAs(broken)
   const before = writes.length
   assertDeepEqual(host.favorites, [], 'a favorites file we cannot use shows as no favorites: ' + JSON.stringify(broken))
-  assertEqual(host.saveFavorites(), false, 'and is never replaced by a save: ' + JSON.stringify(broken))
+  assertEqual(pinned('🎉'), false, 'and is never replaced by a pin: ' + JSON.stringify(broken))
   assertEqual(writes.length, before, 'so the file on disk is untouched: ' + JSON.stringify(broken))
 }
 
@@ -241,25 +241,43 @@ assertEqual(host.favoritesSavable, true, 'a missing file is a first run and stay
 
 failAs(errors.PermissionDenied)
 assertEqual(host.favoritesLoadError, errors.PermissionDenied, 'the read error is kept')
-assertEqual(host.saveFavorites(), false, 'an unreadable file is not replaced')
+assertEqual(pinned('🎉'), false, 'an unreadable file is not replaced')
 
 // A later read — the watcher picking up a hand edit, or a read asked for on open —
 // must not lock saving, or every pin after the first open would be dropped.
 readAs('["👍"]')
-host.favorites = ['👍', '🎉']
 assertEqual(host.favoritesSavable, true, 'a read after the first leaves saving enabled')
-assertEqual(host.saveFavorites(), true, 'so a pin after a later read still lands')
-assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🎉'], 'with the list in memory at that point')
+assertEqual(pinned('🎉'), true, 'so a pin after a later read still lands')
+assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🎉'], 'with the pin applied')
 
-// A read that a save has overtaken is older than the save, so it must not put its
-// list back over it.
-disk = '["👍"]'
+// A change made while the file is mid-read is a delta on what that read brings
+// back: writing it first would replace the hand edit the read was fetching.
 host.reloadFavorites()
-host.favorites = ['👍', '🎉']
-assertEqual(host.saveFavorites(), true, 'a pin during an in-flight read still writes')
+disk = '["👍","🔥"]'
+assertEqual(pinned('🎉'), false, 'a pin during an in-flight read is held, not written')
+assertEqual(writes[writes.length - 1] === undefined || JSON.parse(writes[writes.length - 1]).join() !== '👍,🔥,🎉', true, 'so nothing is written before that read lands')
 host.fileLoaded()
 settle()
-assertDeepEqual(host.favorites, ['👍', '🎉'], 'the read a save overtook does not put its stale list back')
+assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🔥', '🎉'], 'the pin lands on top of the hand edit the read brought back')
+assertDeepEqual(host.favorites, ['👍', '🔥', '🎉'], 'and the list on screen matches the file')
+
+// Two changes in one window are both kept, in order.
+host.reloadFavorites()
+disk = '["🔥"]'
+assertEqual(pinned('🎉'), false, 'first edit held')
+assertEqual(pinned('🚀'), false, 'second edit held')
+host.fileLoaded()
+settle()
+assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['🔥', '🎉', '🚀'], 'both hold their place on top of the read')
+
+// A move is a delta too.
+host.reloadFavorites()
+disk = '["🎉","🚀","🔥"]'
+host.favorites = ['🎉', '🚀', '🔥']
+assertEqual(host.commitFavoriteEdit({ kind: 'move', emoji: '🔥', before: '🎉' }), false, 'a move during a read is held as well')
+host.fileLoaded()
+settle()
+assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['🔥', '🎉', '🚀'], 'and applies to the list the read brought back')
 
 // The startup read found nothing, the file was seeded by hand afterwards, and
 // nothing watched it appear: opening the picker has to read it again.
@@ -272,8 +290,7 @@ const reloadsBefore = reloads.length
 readAs('["👍","🔥"]')
 assertEqual(reloads.length > reloadsBefore, true, 'opening asks for a read even when the file was missing at startup')
 assertDeepEqual(host.favorites, ['👍', '🔥'], 'a favorites file seeded after startup is picked up')
-host.favorites = ['👍', '🔥', '🎉']
-assertEqual(host.saveFavorites(), true, 'and a pin afterwards writes')
+assertEqual(pinned('🎉'), true, 'and a pin afterwards writes')
 assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🔥', '🎉'], 'keeping the favorites that were seeded by hand')
 JS
 

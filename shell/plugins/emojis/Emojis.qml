@@ -54,8 +54,12 @@ Item {
   property bool favoritesReady: false
   property int favoritesLoadError: FileViewError.Success
   property bool favoritesWritable: false
-  // A read is applied only while it is still the newest thing that happened to the
-  // list: a read that a save has overtaken would put a stale list back in memory.
+  // A change made while the file is mid-read. It is a delta on whatever the file
+  // holds, so it waits for that read and is re-applied on top of it: writing first
+  // would replace the list the read was about to bring back.
+  property var favoritesPendingEdits: []
+  // A read is in flight: writing now would be writing a list the file is about to
+  // supersede, so changes wait for it instead.
   property bool favoritesLoadPending: true
   readonly property bool favoritesSavable: root.favoritesReady && root.favoritesWritable
 
@@ -111,27 +115,35 @@ Item {
 
   // The reload on open finishes after the first rebuild; refresh once it lands.
   function loadFavorites(raw) {
-    // A read that a save has overtaken is dropped rather than putting its stale
-    // list back over the pin that came after it.
-    if (!root.favoritesLoadPending) return
     root.favoritesLoadPending = false
     root.favoritesLoadError = FileViewError.Success
     root.favoritesReady = true
     root.favoritesWritable = EmojiSearch.favoritesAreValid(raw)
     root.favorites = EmojiSearch.parseFavorites(raw)
+    if (root.favoritesWritable) root.applyPendingEdits()
     if (root.opened) root.rebuildDisplay()
   }
 
   // A missing file is a first run, so it may be written; a file that exists but
   // could not be read is not ours to replace.
   function favoritesLoadFailed(error) {
-    if (!root.favoritesLoadPending) return
     root.favoritesLoadPending = false
     root.favoritesLoadError = error
     root.favoritesReady = true
     root.favoritesWritable = error === FileViewError.FileNotFound
     root.favorites = []
+    if (root.favoritesWritable) root.applyPendingEdits()
     if (root.opened) root.rebuildDisplay()
+  }
+
+  // Changes made while that read was in flight go on top of what it brought back,
+  // then out to the file — the read's content is the base, the change is the delta.
+  function applyPendingEdits() {
+    var edits = root.favoritesPendingEdits
+    if (edits.length === 0) return
+    root.favoritesPendingEdits = []
+    for (var i = 0; i < edits.length; i++) root.favorites = root.editFavorites(root.favorites, edits[i])
+    root.writeFavorites()
   }
 
   function rebuildDisplay() {
@@ -223,20 +235,33 @@ Item {
     if (index < 0 || index >= displayModel.count) return
     var emoji = displayModel.get(index).emoji
     if (!emoji) return
-    root.favorites = EmojiSearch.toggleFavorite(root.favorites, emoji)
-    root.saveFavorites()
+    root.commitFavoriteEdit({ kind: "toggle", emoji: emoji })
     root.rebuildDisplay()
     // The cell moves between sections; put the cursor back on it.
     root.selectEmoji(emoji)
   }
 
-  function saveFavorites() {
+  // Every pin and move goes through here, so a change made while the file is being
+  // read waits for that read rather than being written over by it.
+  function commitFavoriteEdit(edit) {
     if (!root.favoritesSavable) {
       console.warn("emoji favorites save skipped: the list cannot be read or replaced")
       return false
     }
-    // Anything still in flight is older than this write.
-    root.favoritesLoadPending = false
+    root.favorites = root.editFavorites(root.favorites, edit)
+    if (root.favoritesLoadPending) {
+      root.favoritesPendingEdits = root.favoritesPendingEdits.concat([edit])
+      return false
+    }
+    return root.writeFavorites()
+  }
+
+  function editFavorites(list, edit) {
+    if (edit.kind === "move") return EmojiSearch.moveFavorite(list, edit.emoji, edit.before)
+    return EmojiSearch.toggleFavorite(list, edit.emoji)
+  }
+
+  function writeFavorites() {
     favoritesFile.setText(JSON.stringify(root.favorites) + "\n")
     return true
   }
@@ -283,8 +308,7 @@ Item {
     root.suppressClick = moved
     if (!moved || target < 0 || target >= displayModel.count) return
     if (!root.favoritesSavable) return
-    root.favorites = EmojiSearch.moveFavorite(root.favorites, emoji, displayModel.get(target).emoji)
-    root.saveFavorites()
+    root.commitFavoriteEdit({ kind: "move", emoji: emoji, before: displayModel.get(target).emoji })
     root.rebuildDisplay()
     root.selectEmoji(emoji)
   }
