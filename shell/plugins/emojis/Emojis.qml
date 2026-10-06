@@ -54,9 +54,6 @@ Item {
   property bool favoritesReady: false
   property int favoritesLoadError: FileViewError.Success
   property bool favoritesWritable: false
-  // No file yet, so there is nothing to watch: a list seeded after the shell
-  // started is only found by looking again.
-  property bool favoritesAbsent: false
   readonly property bool favoritesSavable: root.favoritesReady && root.favoritesWritable
 
   // Click-and-hold on a pinned cell moves it. The grid is left alone for the
@@ -76,10 +73,10 @@ Item {
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
-    // Only while there is no file to watch: an edit to a file that exists is seen
-    // by the watcher, and reading a file we already know costs a write race for
-    // nothing.
-    if (root.favoritesAbsent) favoritesFile.reload()
+    // Read on open, always: a hand edit, or a list seeded while the shell was
+    // running, is picked up without restarting anything. The write guards below
+    // are what keep that read from letting a stale list replace a good one.
+    favoritesFile.reload()
     root.rebuildDisplay()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -104,12 +101,11 @@ Item {
     if (root.opened) root.rebuildDisplay()
   }
 
-  // The reload on open finishes after the first rebuild; refresh once it lands.
+  // The read on open finishes after the rebuild; refresh once it lands.
   function loadFavorites(raw) {
     root.favoritesLoadError = FileViewError.Success
     root.favoritesReady = true
     root.favoritesWritable = EmojiSearch.favoritesAreValid(raw)
-    root.favoritesAbsent = false
     root.favorites = EmojiSearch.parseFavorites(raw)
     if (root.opened) root.rebuildDisplay()
   }
@@ -120,7 +116,6 @@ Item {
     root.favoritesLoadError = error
     root.favoritesReady = true
     root.favoritesWritable = error === FileViewError.FileNotFound
-    root.favoritesAbsent = error === FileViewError.FileNotFound
     root.favorites = []
     if (root.opened) root.rebuildDisplay()
   }
@@ -280,17 +275,15 @@ Item {
 
   ListModel { id: displayModel }
 
+  // Read once when the plugin starts and again on each open; nothing else watches
+  // it, so a hand edit is picked up the next time the picker is opened.
   FileView {
     id: favoritesFile
     path: Quickshell.env("HOME") + "/.local/state/omarchy/emoji-favorites.json"
     atomicWrites: true
     printErrors: false
-    // Watched, so an edit made while the picker is open shows up — and a file that
-    // did not exist at startup (nothing there to watch) is read again on open.
-    watchChanges: true
     onLoaded: root.loadFavorites(text())
     onLoadFailed: function(error) { root.favoritesLoadFailed(error) }
-    onFileChanged: reload()
   }
 
   FileView {

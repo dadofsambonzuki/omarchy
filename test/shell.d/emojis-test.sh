@@ -187,7 +187,6 @@ const host = {
   favoritesReady: false,
   favoritesLoadError: errors.Success,
   favoritesWritable: false,
-  favoritesAbsent: false,
   opened: false,
   rebuildDisplay: function() {},
   console: { warn: function() {} },
@@ -249,7 +248,6 @@ assertEqual(host.favoritesSavable, true, 'a missing file is a first run and stay
 
 failAs(errors.PermissionDenied)
 assertEqual(host.favoritesLoadError, errors.PermissionDenied, 'the read error is kept')
-assertEqual(host.favoritesAbsent, false, 'an unreadable file is not treated as absent')
 assertEqual(host.saveFavorites(), false, 'an unreadable file is not replaced')
 
 // A read after the first must not lock saving, or every pin after the first open
@@ -260,18 +258,16 @@ host.favorites = ['👍', '🎉']
 assertEqual(host.saveFavorites(), true, 'so a pin after a later read still lands')
 assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🎉'], 'with the pin applied')
 
-// A file that exists is watched, so opening does not read it again — only a file
-// that was missing at startup is looked for, since nothing could watch it appear.
+// Opening reads the file every time: that is how a hand edit, or a list seeded
+// while the shell was running, gets picked up without a restart.
 const reloadsBefore = reloads.length
 host.openRead()
-assertEqual(reloads.length, reloadsBefore, 'opening does not re-read a file the watcher is following')
-failAs(errors.FileNotFound)
+assertEqual(reloads.length, reloadsBefore + 1, 'opening reads the favorites file')
 host.openRead()
-assertEqual(reloads.length, reloadsBefore + 1, 'but a file that was missing at startup is read again on open')
+assertEqual(reloads.length, reloadsBefore + 2, 'and reads it on every open, not just the first')
 readAs('["👍","🔥"]')
-assertEqual(host.favoritesAbsent, false, 'and a successful read stops it being absent')
 host.favorites = ['👍', '🔥', '🎉']
-assertEqual(host.saveFavorites(), true, 'a pin after that writes')
+assertEqual(host.saveFavorites(), true, 'a pin after an open-time read writes')
 assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🔥', '🎉'], 'keeping the favorites that were seeded by hand')
 
 JS
