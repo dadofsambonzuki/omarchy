@@ -205,13 +205,15 @@ vm.createContext(host)
 
 for (const name of ['readFavorites', 'readIsCurrent', 'loadFavorites', 'favoritesLoadFailed', 'saveFavorites'])
   vm.runInContext(extractFunction(name), host)
+// open() itself, and the handler the watcher calls: the read they make is the
+// behaviour under test, so both are run rather than looked for in the file.
+vm.runInContext('Qt = { callLater: function() {} }', host)
+vm.runInContext('keyCatcher = { forceActiveFocus: function() {} }', host)
+vm.runInContext(extractFunction('open'), host)
 vm.runInContext('function fileLoaded() {' + extractHandler('onLoaded:') + '}', host)
 vm.runInContext('function fileLoadFailed(error) {' + extractHandler('onLoadFailed: function(error)') + '}', host)
-// open() and the FileView block, so the wiring is asserted rather than assumed.
-const openAt = source.indexOf('  function open(payloadJson) {')
-if (openAt < 0) throw new Error('missing open() in Emojis.qml')
-const openBody = source.slice(openAt, source.indexOf('\n  }', openAt))
-if (!openBody.includes('root.readFavorites()')) throw new Error('open() no longer reads the favorites file')
+// open() and the FileView block want reading twice: open() is run against the fake
+// below, and the block's declarations are checked here.
 const fileViewAt = source.indexOf('id: favoritesFile')
 if (fileViewAt < 0) throw new Error('missing the favorites FileView')
 const fileViewBlock = source.slice(fileViewAt, source.indexOf('\n  }', fileViewAt))
@@ -264,10 +266,20 @@ assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🎉'], 'with t
 // covers an edit made before the picker opened, the other an edit made while it is
 // open. Both go through readFavorites().
 const reloadsBefore = reloads.length
-host.readFavorites()
-assertEqual(reloads.length, reloadsBefore + 1, 'a read asks FileView for the file')
+host.open('{}')
+assertEqual(host.opened, true, 'opening opens the picker')
+assertEqual(reloads.length, reloadsBefore + 1, 'and reads the favorites file')
+host.open('{}')
+assertEqual(reloads.length, reloadsBefore + 2, 'and reads it again on every open, not just the first')
+// The watcher's handler, run the same way.
+const fileChanged = extractHandler('onFileChanged:')
+if (!fileChanged) throw new Error('the favorites FileView no longer handles onFileChanged')
+vm.runInContext('function favoritesFileChanged() {' + fileChanged + '}', host)
+host.favoritesFileChanged()
+assertEqual(reloads.length, reloadsBefore + 3, 'a change to the file is read again')
+// watchChanges is a declaration rather than code, so it is asserted as text; the
+// watch behaving was verified live with the picker open.
 assertEqual(/watchChanges:\s*true/.test(fileViewBlock), true, 'and the file is watched while the picker is open')
-assertEqual(fileViewBlock.includes('onFileChanged: root.readFavorites()'), true, 'so a change to the file is read again')
 readAs('["👍","🔥"]')
 host.favorites = ['👍', '🔥', '🎉']
 assertEqual(host.saveFavorites(), true, 'a pin after a read writes')
