@@ -73,10 +73,9 @@ Item {
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
-    // Read on open, always: a hand edit, or a list seeded while the shell was
-    // running, is picked up without restarting anything. The write guards below
-    // are what keep that read from letting a stale list replace a good one.
-    favoritesFile.reload()
+    // Read on open as well as on change: an edit made before the picker opened is
+    // picked up here, and one made while it is open is picked up by the watcher.
+    root.readFavorites()
     root.rebuildDisplay()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -101,7 +100,13 @@ Item {
     if (root.opened) root.rebuildDisplay()
   }
 
-  // The read on open finishes after the rebuild; refresh once it lands.
+  // Every read goes through here: the read on open, and the read the watcher asks
+  // for when the file changes.
+  function readFavorites() {
+    favoritesFile.reload()
+  }
+
+  // The read finishes after the rebuild; refresh once it lands.
   function loadFavorites(raw) {
     root.favoritesLoadError = FileViewError.Success
     root.favoritesReady = true
@@ -275,15 +280,18 @@ Item {
 
   ListModel { id: displayModel }
 
-  // Read once when the plugin starts and again on each open; nothing else watches
-  // it, so a hand edit is picked up the next time the picker is opened.
+  // Read once when the plugin starts, again on each open, and again whenever the
+  // file changes, so an edit — made by hand, or by a seed script — is picked up
+  // without restarting anything.
   FileView {
     id: favoritesFile
     path: Quickshell.env("HOME") + "/.local/state/omarchy/emoji-favorites.json"
     atomicWrites: true
     printErrors: false
+    watchChanges: true
     onLoaded: root.loadFavorites(text())
     onLoadFailed: function(error) { root.favoritesLoadFailed(error) }
+    onFileChanged: root.readFavorites()
   }
 
   FileView {

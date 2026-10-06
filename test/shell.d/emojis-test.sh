@@ -201,25 +201,25 @@ const host = {
 host.root = host
 vm.createContext(host)
 
-for (const name of ['loadFavorites', 'favoritesLoadFailed', 'saveFavorites'])
+for (const name of ['readFavorites', 'loadFavorites', 'favoritesLoadFailed', 'saveFavorites'])
   vm.runInContext(extractFunction(name), host)
 vm.runInContext('function fileLoaded() {' + extractHandler('onLoaded:') + '}', host)
 vm.runInContext('function fileLoadFailed(error) {' + extractHandler('onLoadFailed: function(error)') + '}', host)
-// The line open() uses, so the test drives the real condition rather than a copy.
-// Pull it out of open() itself, and fail loudly if open() stops re-reading at all
-// rather than silently testing an empty function.
+// open() and the FileView block, so the wiring is asserted rather than assumed.
 const openAt = source.indexOf('  function open(payloadJson) {')
 if (openAt < 0) throw new Error('missing open() in Emojis.qml')
 const openBody = source.slice(openAt, source.indexOf('\n  }', openAt))
-const openReadLine = openBody.split('\n').find(line => line.includes('favoritesFile.reload()'))
-if (!openReadLine) throw new Error('open() no longer re-reads the favorites file')
-vm.runInContext('function openRead() {' + openReadLine.trim() + '}', host)
+if (!openBody.includes('root.readFavorites()')) throw new Error('open() no longer reads the favorites file')
+const fileViewAt = source.indexOf('id: favoritesFile')
+if (fileViewAt < 0) throw new Error('missing the favorites FileView')
+const fileViewBlock = source.slice(fileViewAt, source.indexOf('\n  }', fileViewAt))
 
 // Run the picker's own binding rather than restating the rule in the test.
 const savableExpression = extractExpression('readonly property bool favoritesSavable:')
 function settle() { host.favoritesSavable = vm.runInContext(savableExpression, host) }
 
-function readAs(contents) { disk = contents; host.fileLoaded(); settle() }
+// A read the way the picker makes one: ask for it, then let it land.
+function readAs(contents) { disk = contents; host.readFavorites(); host.fileLoaded(); settle() }
 function failAs(error) { host.fileLoadFailed(error); settle() }
 
 settle()
@@ -258,16 +258,17 @@ host.favorites = ['👍', '🎉']
 assertEqual(host.saveFavorites(), true, 'so a pin after a later read still lands')
 assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🎉'], 'with the pin applied')
 
-// Opening reads the file every time: that is how a hand edit, or a list seeded
-// while the shell was running, gets picked up without a restart.
+// Opening reads the file, and the watcher reads it again whenever it changes: one
+// covers an edit made before the picker opened, the other an edit made while it is
+// open. Both go through readFavorites().
 const reloadsBefore = reloads.length
-host.openRead()
-assertEqual(reloads.length, reloadsBefore + 1, 'opening reads the favorites file')
-host.openRead()
-assertEqual(reloads.length, reloadsBefore + 2, 'and reads it on every open, not just the first')
+host.readFavorites()
+assertEqual(reloads.length, reloadsBefore + 1, 'a read asks FileView for the file')
+assertEqual(/watchChanges:\s*true/.test(fileViewBlock), true, 'and the file is watched while the picker is open')
+assertEqual(fileViewBlock.includes('onFileChanged: root.readFavorites()'), true, 'so a change to the file is read again')
 readAs('["👍","🔥"]')
 host.favorites = ['👍', '🔥', '🎉']
-assertEqual(host.saveFavorites(), true, 'a pin after an open-time read writes')
+assertEqual(host.saveFavorites(), true, 'a pin after a read writes')
 assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🔥', '🎉'], 'keeping the favorites that were seeded by hand')
 
 JS
