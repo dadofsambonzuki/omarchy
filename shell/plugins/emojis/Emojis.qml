@@ -54,6 +54,10 @@ Item {
   property bool favoritesReady: false
   property int favoritesLoadError: FileViewError.Success
   property bool favoritesWritable: false
+  // Every local change moves the list past any read that was asked for before it,
+  // so a read that a pin overtook can be told apart from one that has not been.
+  property int favoritesRevision: 0
+  property int favoritesReadRevision: -1
   readonly property bool favoritesSavable: root.favoritesReady && root.favoritesWritable
 
   // Click-and-hold on a pinned cell moves it. The grid is left alone for the
@@ -103,11 +107,20 @@ Item {
   // Every read goes through here: the read on open, and the read the watcher asks
   // for when the file changes.
   function readFavorites() {
+    root.favoritesReadRevision = root.favoritesRevision
     favoritesFile.reload()
+  }
+
+  // A read is applied only while it is still the newest thing to have happened to
+  // the list. A pin or a drag made since it was asked for is newer, and it is the
+  // one the user made: its list stays in memory, and its write is already on disk.
+  function readIsCurrent() {
+    return root.favoritesReadRevision === root.favoritesRevision
   }
 
   // The read finishes after the rebuild; refresh once it lands.
   function loadFavorites(raw) {
+    if (!root.readIsCurrent()) return
     root.favoritesLoadError = FileViewError.Success
     root.favoritesReady = true
     root.favoritesWritable = EmojiSearch.favoritesAreValid(raw)
@@ -118,6 +131,7 @@ Item {
   // A missing file is a first run, so it may be written; a file that exists but
   // could not be read is not ours to replace.
   function favoritesLoadFailed(error) {
+    if (!root.readIsCurrent()) return
     root.favoritesLoadError = error
     root.favoritesReady = true
     root.favoritesWritable = error === FileViewError.FileNotFound
@@ -226,6 +240,8 @@ Item {
       console.warn("emoji favorites save skipped: the list cannot be read or replaced")
       return false
     }
+    // The list has moved past any read in flight, so that read is the older one.
+    root.favoritesRevision++
     favoritesFile.setText(JSON.stringify(root.favorites) + "\n")
     return true
   }

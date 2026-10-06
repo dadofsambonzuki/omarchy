@@ -187,6 +187,8 @@ const host = {
   favoritesReady: false,
   favoritesLoadError: errors.Success,
   favoritesWritable: false,
+  favoritesRevision: 0,
+  favoritesReadRevision: -1,
   opened: false,
   rebuildDisplay: function() {},
   console: { warn: function() {} },
@@ -201,7 +203,7 @@ const host = {
 host.root = host
 vm.createContext(host)
 
-for (const name of ['readFavorites', 'loadFavorites', 'favoritesLoadFailed', 'saveFavorites'])
+for (const name of ['readFavorites', 'readIsCurrent', 'loadFavorites', 'favoritesLoadFailed', 'saveFavorites'])
   vm.runInContext(extractFunction(name), host)
 vm.runInContext('function fileLoaded() {' + extractHandler('onLoaded:') + '}', host)
 vm.runInContext('function fileLoadFailed(error) {' + extractHandler('onLoadFailed: function(error)') + '}', host)
@@ -270,6 +272,31 @@ readAs('["👍","🔥"]')
 host.favorites = ['👍', '🔥', '🎉']
 assertEqual(host.saveFavorites(), true, 'a pin after a read writes')
 assertDeepEqual(JSON.parse(writes[writes.length - 1]), ['👍', '🔥', '🎉'], 'keeping the favorites that were seeded by hand')
+
+// A read that a pin overtook must not put its older list back: the pin is what the
+// user made, and its write is already on the file.
+disk = '["👍"]'
+const writesBeforeOvertaken = writes.length
+host.readFavorites()
+host.favorites = ['👍', '🎉']
+assertEqual(host.saveFavorites(), true, 'a pin while a read is in flight is written')
+host.fileLoaded()
+settle()
+assertDeepEqual(host.favorites, ['👍', '🎉'], 'and the read it overtook does not put the older list back')
+assertEqual(writes.length, writesBeforeOvertaken + 1, 'and the read landing writes nothing of its own')
+
+// A read nothing overtook is applied as before.
+readAs('["🔥"]')
+assertDeepEqual(host.favorites, ['🔥'], 'a read that no change overtook is still applied')
+
+// A failed read a pin overtook must not empty the list either.
+host.readFavorites()
+host.favorites = ['🔥', '🎉']
+assertEqual(host.saveFavorites(), true, 'a pin while a read that will fail is in flight is written')
+host.fileLoadFailed(errors.FileNotFound)
+settle()
+assertDeepEqual(host.favorites, ['🔥', '🎉'], 'and the failed read it overtook cannot empty the list')
+assertEqual(host.favoritesSavable, true, 'nor take saving away from a list that has been read')
 
 JS
 
