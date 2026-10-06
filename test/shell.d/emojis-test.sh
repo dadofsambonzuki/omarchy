@@ -128,6 +128,18 @@ assertEqual(emojis.rowTarget(wideCells, 8, 26, -1), 10, 'up from a catalog colum
 assertEqual(emojis.rowTarget(wideCells, 8, 27, -1), 10, 'and the same for the column beyond it')
 assertEqual(emojis.rowTarget(wideCells, 8, 24, -1), 8, 'up from catalog column 0 lands on the pin in that column')
 assertEqual(emojis.rowTarget(wideCells, 8, 31, -1), 10, 'up from the far edge of the catalog band still lands on a pin')
+
+assertEqual(emojis.pageTarget(wideCells, 8, 8, 2), 24, 'a page down lands in the band it reaches')
+assertEqual(emojis.pageTarget(wideCells, 8, 24, 9), 31, 'a page past the end of the grid clamps to its last emoji')
+assertEqual(emojis.pageTarget(wideCells, 8, 31, -9), 8, 'a page past the start clamps to its first emoji')
+assertEqual(emojis.pageTarget(cells, 8, 8, -9), 8, 'a page up from the top row stays on the first emoji')
+
+// The short-result case: a search that fits in one band could not be paged at all
+// when a page target of -1 left the cursor where it was.
+const twoMatches = emojis.buildCells(fixture, [], 'face', 1000, 8)
+assertEqual(twoMatches.length, 2, 'a narrow search still builds a plain list')
+assertEqual(emojis.pageTarget(twoMatches, 8, 0, 9), 1, 'a page down a short result lands on its last emoji')
+assertEqual(emojis.pageTarget(twoMatches, 8, 1, -9), 0, 'and a page up lands on its first')
 JS
 
 # The picker's favorites file is read asynchronously, so drive the QML's own

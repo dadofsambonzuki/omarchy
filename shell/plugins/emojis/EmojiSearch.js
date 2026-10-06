@@ -178,6 +178,15 @@ function rowTarget(cells, columns, index, rowDelta) {
   return -1
 }
 
+// A page that would run past the end of the grid clamps to it instead of staying
+// put, so a short result set can still be paged to its boundary — which is what
+// the index arithmetic did before the rows were resolved by band.
+function pageTarget(cells, columns, index, rowDelta) {
+  var target = rowTarget(cells, columns, index, rowDelta)
+  if (target >= 0 || !rowDelta || !isEmojiCell(cells, index)) return target
+  return rowDelta > 0 ? stepTarget(cells, cells.length - 1, -1) : stepTarget(cells, 0, 1)
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     parseEmojis: parseEmojis,
@@ -191,6 +200,7 @@ if (typeof module !== "undefined") {
     buildCells: buildCells,
     isEmojiCell: isEmojiCell,
     stepTarget: stepTarget,
-    rowTarget: rowTarget
+    rowTarget: rowTarget,
+    pageTarget: pageTarget
   }
 }

@@ -180,7 +180,8 @@ Item {
     if (displayModel.count === 0) return
     if (!cursorActive) return moveTo(root.seatCursor(delta < 0))
     var visibleRows = Math.max(1, Math.floor(resultGrid.height / cellHeight))
-    var target = EmojiSearch.rowTarget(root.cells, columns, selectedIndex, delta * visibleRows)
+    // A page the grid cannot fit clamps to its end rather than going nowhere.
+    var target = EmojiSearch.pageTarget(root.cells, columns, selectedIndex, delta * visibleRows)
     if (target >= 0) moveTo(target)
   }
 
