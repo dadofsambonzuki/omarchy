@@ -87,8 +87,9 @@ const strip = text => text
 
 const program = `
   var nowMs = 0
-  function pace(window) {
+  function pace(window, fetchedAt) {
     var resetMs = resetMsFor(window)
+    fetchedAt = fetchedAt || 0
     var ${BINDINGS.join(', ')}
     ${BINDINGS.map((name, i) =>
       name + ' = (function(){' + wrap(strip(bindingBodies[i].body), bindingBodies[i].block) + '})();').join('\n    ')}
@@ -180,6 +181,19 @@ check('an already-reset window has no elapsed position', -1, paceOf(c).elapsed)
 // cannot put the notch off the track.
 c = window('Rolling (5h)', 0.5, 6 * HOUR)
 check('a window before its cycle clamps to zero elapsed', 0, paceOf(c).elapsed)
+
+// ---- a kept reading holds its position ----
+// The percentage is frozen when a check fails, so the clock it is compared with
+// has to be read at the same instant; otherwise the notch drifts while the fill
+// stands still, and a stale row's pace reads as though it were being measured.
+c = window('Rolling (5h)', 0.5, 2.5 * HOUR)
+check('a fresh reading is on pace', 'on pace', paceOf(c).paceCaption)
+const staleAt = NOW
+panel.setNow(NOW + 45 * 60 * 1000)
+check('a kept reading still reads the same an hour later', 'on pace', panel.pace(c, staleAt).paceCaption)
+check('and its position is unchanged', 0.5, Math.round(panel.pace(c, staleAt).elapsed * 100) / 100)
+check('while the countdown beside it does advance', 1.75 * HOUR, panel.pace(c, staleAt).resetMs)
+panel.setNow(NOW)
 
 // ---- the span survives the row-building ----
 // displayWindows() attaches scoped allowances to their base row; it must not drop

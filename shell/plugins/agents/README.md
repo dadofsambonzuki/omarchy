@@ -22,7 +22,9 @@ Every subscription on one page, limits first.
   the fill, its edge marked by a notch: fill past the notch is ahead of the clock,
   short of it is behind, and the tooltip says by how much ("42% of the cycle
   elapsed · 12% behind"). A window whose label states no cycle — a model-scoped
-  limit, one named without a duration — keeps the plain meter. A model-scoped
+  limit, one named without a duration — keeps the plain meter, and a reading kept
+  from an earlier check holds its position, the clock being read at the moment the
+  numbers were rather than the moment they are drawn. A model-scoped
   allowance on the same clock (Claude's Fable weekly
   limit) is a tick on that window's meter rather than a line of its own; the
   row's tooltip names it. A lapsed or missing sign-in shows a _Sign-in required_ link that signs

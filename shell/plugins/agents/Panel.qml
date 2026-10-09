@@ -582,10 +582,15 @@ Panel {
     return best
   }
 
-  function resetMsFor(w) {
+  // How long until the window resets, measured from `atMs` when one is given:
+  // the pace marker compares the spend with the clock at the instant the spend was
+  // read, not at the instant it happens to be drawn, or a reading kept past a
+  // failed check would drift while its percentage stood still.
+  function resetMsFor(w, atMs) {
     if (!w || w.resetAt === "") return -1
     var ms = new Date(w.resetAt).getTime()
-    return isFinite(ms) ? ms - root.nowMs : -1
+    var at = atMs === undefined || atMs <= 0 ? root.nowMs : atMs
+    return isFinite(ms) ? ms - at : -1
   }
 
   function formatDuration(ms) {
@@ -1900,10 +1905,16 @@ Panel {
     // How far through its cycle the window is: the elapsed fraction of the label's
     // cycle, or -1 when the label names no cycle (a model-scoped limit, a window
     // stated without a duration) or the window has already reset.
+    //
+    // Read at `fetchedAt` when the collector states it, so the clock is read at the
+    // same instant as the percentage it is compared with. A reading kept past a
+    // failed check then holds its position instead of drifting as `nowMs` advances,
+    // which would let stale numbers read as current while the row is only dimmed.
     readonly property real elapsed: {
       var span = compact.window ? Number(compact.window.spanMs || 0) : 0
-      var remaining = compact.resetMs
-      if (span <= 0 || remaining < 0) return -1
+      if (span <= 0) return -1
+      var remaining = compact.fetchedAt > 0 ? root.resetMsFor(compact.window, compact.fetchedAt) : compact.resetMs
+      if (remaining < 0) return -1
       return root.clamp(1 - remaining / span, 0, 1)
     }
     readonly property bool paceKnown: compact.elapsed >= 0 && !!compact.window && compact.window.percent >= 0
