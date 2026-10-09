@@ -195,6 +195,17 @@ check('and its position is unchanged', 0.5, Math.round(panel.pace(c, staleAt).el
 check('while the countdown beside it does advance', 1.75 * HOUR, panel.pace(c, staleAt).resetMs)
 panel.setNow(NOW)
 
+// ---- a window rolled forward since the reading ----
+// Grok rolls an expired Weekly window past its reset when its access token lapses,
+// keeping the cached timestamp, so the record holds 0% against a cycle that began
+// after the reading was taken. The reading's instant does not describe that window,
+// and the clock its zero should be compared with is now — not ten days ago, which
+// would put the notch at the start of a week that is already three days old.
+c = panel.limitWindows({ limits: [{ label: 'Weekly', percent: 0, resetsAt: new Date(NOW + 4 * DAY).toISOString() }] })[0]
+const longAgo = NOW - 10 * DAY
+check('a window rolled forward since the reading is paced against now', 0.43, Math.round(panel.pace(c, longAgo).elapsed * 100) / 100)
+check('so its zero reads as behind rather than on pace', '43% behind', panel.pace(c, longAgo).paceCaption)
+
 // ---- the span survives the row-building ----
 // displayWindows() attaches scoped allowances to their base row; it must not drop
 // the cycle on the way through, or the meter loses its marker.

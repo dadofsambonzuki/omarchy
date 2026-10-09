@@ -1913,7 +1913,18 @@ Panel {
     readonly property real elapsed: {
       var span = compact.window ? Number(compact.window.spanMs || 0) : 0
       if (span <= 0) return -1
-      var remaining = compact.fetchedAt > 0 ? root.resetMsFor(compact.window, compact.fetchedAt) : compact.resetMs
+      // Read the clock at the moment the percentage was, so a reading kept past a
+      // failed check holds its position instead of drifting as `nowMs` advances.
+      var at = compact.fetchedAt
+      // Unless the window began after that moment, in which case it has been rolled
+      // forward into a new cycle since the reading was taken — Grok rolls a lapsed
+      // Weekly window past its reset while keeping the cached timestamp — so the
+      // reading's instant does not describe this window. Its zero still stands,
+      // since nothing spends the allowance while the agent is not running, and the
+      // clock to compare it with is now.
+      var resets = compact.window && compact.window.resetAt ? new Date(compact.window.resetAt).getTime() : NaN
+      if (at > 0 && isFinite(resets) && resets - span > at) at = root.nowMs
+      var remaining = at > 0 ? root.resetMsFor(compact.window, at) : compact.resetMs
       if (remaining < 0) return -1
       return root.clamp(1 - remaining / span, 0, 1)
     }

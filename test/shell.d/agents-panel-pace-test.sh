@@ -48,6 +48,8 @@ assert(ok('a window before its cycle clamps to zero elapsed').test(output), 'a w
 assert(ok('a kept reading still reads the same an hour later').test(output), 'a reading kept past a failed check holds its pace')
 assert(ok('and its position is unchanged').test(output), 'a kept reading holds its position on the clock')
 assert(ok('while the countdown beside it does advance').test(output), 'the countdown beside a kept reading stays live')
+assert(ok('a window rolled forward since the reading is paced against now').test(output), 'a window rolled into a new cycle is paced against now')
+assert(ok('so its zero reads as behind rather than on pace').test(output), "a rolled window's zero does not read as on pace")
 assert(ok('windowSpanMs reads Rolling (5h)').test(output), 'a five-hour window states its cycle')
 assert(ok('windowSpanMs reads 5 hours').test(output), 'a spelled-out hour count is a cycle')
 assert(ok('windowSpanMs reads Rolling (30m)').test(output), 'a collector may label a window in bare minutes')
