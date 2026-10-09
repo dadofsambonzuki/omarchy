@@ -195,16 +195,16 @@ check('and its position is unchanged', 0.5, Math.round(panel.pace(c, staleAt).el
 check('while the countdown beside it does advance', 1.75 * HOUR, panel.pace(c, staleAt).resetMs)
 panel.setNow(NOW)
 
-// ---- a window rolled forward since the reading ----
-// Grok rolls an expired Weekly window past its reset when its access token lapses,
-// keeping the cached timestamp, so the record holds 0% against a cycle that began
-// after the reading was taken. The reading's instant does not describe that window,
-// and the clock its zero should be compared with is now — not ten days ago, which
-// would put the notch at the start of a week that is already three days old.
-c = panel.limitWindows({ limits: [{ label: 'Weekly', percent: 0, resetsAt: new Date(NOW + 4 * DAY).toISOString() }] })[0]
-const longAgo = NOW - 10 * DAY
-check('a window rolled forward since the reading is paced against now', 0.43, Math.round(panel.pace(c, longAgo).elapsed * 100) / 100)
-check('so its zero reads as behind rather than on pace', '43% behind', panel.pace(c, longAgo).paceCaption)
+// ---- the panel does not guess whether a window rolled ----
+// A month is 28-31 days and its label says only "Monthly", so a 30-day assumption
+// cannot tell a window that rolled from one that has just begun: a reading taken at
+// the start of a 31-day month sits before the assumed start, and inferring a roll
+// from that put the notch 17% into a month that had not moved. The collector
+// declares a roll by stamping the record with it (bin/omarchy-agent-usage-grok);
+// the panel reads the clock at whatever stamp it is given.
+c = panel.limitWindows({ limits: [{ label: 'Monthly', percent: 0, resetsAt: new Date(NOW + 25 * DAY).toISOString() }] })[0]
+check('a month read at its start sits at the start of its cycle', 0, panel.pace(c, NOW - 6 * DAY).elapsed)
+check('and reads as on pace rather than behind', 'on pace', panel.pace(c, NOW - 6 * DAY).paceCaption)
 
 // ---- the span survives the row-building ----
 // displayWindows() attaches scoped allowances to their base row; it must not drop

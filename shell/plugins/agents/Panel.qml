@@ -1915,15 +1915,12 @@ Panel {
       if (span <= 0) return -1
       // Read the clock at the moment the percentage was, so a reading kept past a
       // failed check holds its position instead of drifting as `nowMs` advances.
+      // A collector that rolls a window forward declares it by stamping the record
+      // with the roll, since only it knows the cycle restarted; the panel infers
+      // nothing, because a label's cycle is approximate where it matters — a month
+      // is 28-31 days and says only "Monthly", so a 30-day assumption cannot tell a
+      // rolled window from one that has just begun.
       var at = compact.fetchedAt
-      // Unless the window began after that moment, in which case it has been rolled
-      // forward into a new cycle since the reading was taken — Grok rolls a lapsed
-      // Weekly window past its reset while keeping the cached timestamp — so the
-      // reading's instant does not describe this window. Its zero still stands,
-      // since nothing spends the allowance while the agent is not running, and the
-      // clock to compare it with is now.
-      var resets = compact.window && compact.window.resetAt ? new Date(compact.window.resetAt).getTime() : NaN
-      if (at > 0 && isFinite(resets) && resets - span > at) at = root.nowMs
       var remaining = at > 0 ? root.resetMsFor(compact.window, at) : compact.resetMs
       if (remaining < 0) return -1
       return root.clamp(1 - remaining / span, 0, 1)

@@ -24,9 +24,10 @@ Every subscription on one page, limits first.
   elapsed · 12% behind"). A window whose label states no cycle — a model-scoped
   limit, one named without a duration — keeps the plain meter, and a reading kept
   from an earlier check holds its position, the clock being read at the moment the
-  numbers were rather than the moment they are drawn. A window rolled forward into
-  a new cycle since the reading is measured against the clock now instead, the
-  reading predating the cycle it now belongs to. A model-scoped
+  numbers were rather than the moment they are drawn. A collector that rolls a
+  window forward into a new cycle stamps the record with the roll, which is when
+  its numbers became true; the panel infers no roll of its own, since a month is
+  28-31 days and its label says only "Monthly". A model-scoped
   allowance on the same clock (Claude's Fable weekly
   limit) is a tick on that window's meter rather than a line of its own; the
   row's tooltip names it. A lapsed or missing sign-in shows a _Sign-in required_ link that signs
